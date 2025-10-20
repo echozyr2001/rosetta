@@ -554,44 +554,45 @@ impl<'input> Lexer<'input> {
 
         // Ordered lists: 1. 2) etc.
         if let Some(current) = self.char_stream.current()
-            && let Some(_digit) = current.chars().next().and_then(|c| c.to_digit(10)) {
-                // Use a simple string-based approach to check for ordered list pattern
-                let remaining = &self.char_stream.input[current_offset..];
+            && let Some(_digit) = current.chars().next().and_then(|c| c.to_digit(10))
+        {
+            // Use a simple string-based approach to check for ordered list pattern
+            let remaining = &self.char_stream.input[current_offset..];
 
-                // Look for pattern like "1. " or "123) "
-                let mut chars = remaining.chars();
-                let mut number_str = String::new();
+            // Look for pattern like "1. " or "123) "
+            let mut chars = remaining.chars();
+            let mut number_str = String::new();
 
-                // Collect digits
-                while let Some(ch) = chars.next() {
-                    if ch.is_ascii_digit() {
-                        number_str.push(ch);
-                    } else if ch == '.' || ch == ')' {
-                        // Check if followed by space
-                        if chars.next() == Some(' ') {
-                            let number = number_str.parse::<u32>().unwrap_or(0);
+            // Collect digits
+            while let Some(ch) = chars.next() {
+                if ch.is_ascii_digit() {
+                    number_str.push(ch);
+                } else if ch == '.' || ch == ')' {
+                    // Check if followed by space
+                    if chars.next() == Some(' ') {
+                        let number = number_str.parse::<u32>().unwrap_or(0);
 
-                            // Advance past the number and delimiter
-                            for _ in 0..number_str.len() {
-                                self.advance();
-                            }
-                            self.advance(); // delimiter
-
-                            return Ok(Some(Token::ListMarker {
-                                kind: ListKind::Ordered {
-                                    start: number,
-                                    delimiter: ch,
-                                },
-                                indent: 0,
-                            }));
-                        } else {
-                            break;
+                        // Advance past the number and delimiter
+                        for _ in 0..number_str.len() {
+                            self.advance();
                         }
+                        self.advance(); // delimiter
+
+                        return Ok(Some(Token::ListMarker {
+                            kind: ListKind::Ordered {
+                                start: number,
+                                delimiter: ch,
+                            },
+                            indent: 0,
+                        }));
                     } else {
                         break;
                     }
+                } else {
+                    break;
                 }
             }
+        }
 
         Ok(None)
     }
