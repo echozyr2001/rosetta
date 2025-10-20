@@ -1,7 +1,7 @@
 pub mod ast;
+pub mod codegen;
 pub mod dom;
 pub mod parser;
-pub mod codegen;
 
 /// Converts a Markdown string to an HTML string.
 ///
@@ -17,9 +17,7 @@ pub fn to_html(markdown: &str) -> String {
     let dom = dom::from_ast(root);
 
     // 3. Target Code Generation
-    let html = codegen::generate_html(dom);
-
-    html
+    codegen::generate_html(dom)
 }
 
 #[cfg(test)]
