@@ -3,74 +3,105 @@
 /// This module defines error types and utilities for comprehensive error reporting
 /// throughout the parsing and generation pipeline.
 use crate::lexer::Position;
-use std::fmt;
+use thiserror::Error;
 
 /// Main error type for the Markdown engine.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum MarkdownError {
     /// Lexical analysis errors (tokenization phase).
+    #[error("Lexical error at line {}, column {}: {message}", position.line, position.column)]
     Lex { position: Position, message: String },
 
     /// Parsing errors (AST construction phase).
+    #[error("Parse error at line {}, column {}: {message}", position.line, position.column)]
     Parse { position: Position, message: String },
 
     /// DOM transformation errors.
+    #[error("Transform error: {message}")]
     Transform { message: String },
 
     /// HTML generation errors.
+    #[error("Generation error: {message}")]
     Generation { message: String },
 
     /// I/O related errors.
-    Io { source: std::io::Error },
-}
+    #[error("IO error: {source}")]
+    Io {
+        #[from]
+        source: std::io::Error,
+    },
 
-impl fmt::Display for MarkdownError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            MarkdownError::Lex { position, message } => {
-                write!(
-                    f,
-                    "Lexical error at line {}, column {}: {}",
-                    position.line, position.column, message
-                )
-            }
-            MarkdownError::Parse { position, message } => {
-                write!(
-                    f,
-                    "Parse error at line {}, column {}: {}",
-                    position.line, position.column, message
-                )
-            }
-            MarkdownError::Transform { message } => {
-                write!(f, "Transform error: {}", message)
-            }
-            MarkdownError::Generation { message } => {
-                write!(f, "Generation error: {}", message)
-            }
-            MarkdownError::Io { source } => {
-                write!(f, "IO error: {}", source)
-            }
-        }
-    }
-}
+    /// UTF-8 encoding errors.
+    #[error("UTF-8 encoding error: {source}")]
+    Utf8 {
+        #[from]
+        source: std::str::Utf8Error,
+    },
 
-impl std::error::Error for MarkdownError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            MarkdownError::Io { source } => Some(source),
-            _ => None,
-        }
-    }
-}
-
-impl From<std::io::Error> for MarkdownError {
-    fn from(error: std::io::Error) -> Self {
-        MarkdownError::Io { source: error }
-    }
+    /// String conversion errors.
+    #[error("String conversion error: {source}")]
+    FromUtf8 {
+        #[from]
+        source: std::string::FromUtf8Error,
+    },
 }
 
 /// Convenience type alias for Results in the Markdown engine.
 pub type Result<T> = std::result::Result<T, MarkdownError>;
+
+impl MarkdownError {
+    /// Creates a new lexical error with position information.
+    pub fn lex_error(position: Position, message: impl Into<String>) -> Self {
+        MarkdownError::Lex {
+            position,
+            message: message.into(),
+        }
+    }
+
+    /// Creates a new parse error with position information.
+    pub fn parse_error(position: Position, message: impl Into<String>) -> Self {
+        MarkdownError::Parse {
+            position,
+            message: message.into(),
+        }
+    }
+
+    /// Creates a new transform error.
+    pub fn transform_error(message: impl Into<String>) -> Self {
+        MarkdownError::Transform {
+            message: message.into(),
+        }
+    }
+
+    /// Creates a new generation error.
+    pub fn generation_error(message: impl Into<String>) -> Self {
+        MarkdownError::Generation {
+            message: message.into(),
+        }
+    }
+
+    /// Returns the position associated with this error, if any.
+    pub fn position(&self) -> Option<Position> {
+        match self {
+            MarkdownError::Lex { position, .. } => Some(*position),
+            MarkdownError::Parse { position, .. } => Some(*position),
+            _ => None,
+        }
+    }
+
+    /// Returns true if this is a recoverable error.
+    pub fn is_recoverable(&self) -> bool {
+        match self {
+            MarkdownError::Lex { .. } => true,
+            MarkdownError::Parse { .. } => true,
+            MarkdownError::Transform { .. } => false,
+            MarkdownError::Generation { .. } => false,
+            MarkdownError::Io { .. } => false,
+            MarkdownError::Utf8 { .. } => false,
+            MarkdownError::FromUtf8 { .. } => false,
+        }
+    }
+}
 
 /// Error severity levels for different types of issues.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -205,6 +236,46 @@ mod tests {
     }
 
     #[test]
+    fn test_error_constructors() {
+        let position = Position {
+            line: 2,
+            column: 10,
+            offset: 15,
+        };
+
+        let lex_error = MarkdownError::lex_error(position, "Invalid token");
+        assert_eq!(lex_error.position(), Some(position));
+        assert!(lex_error.is_recoverable());
+
+        let parse_error = MarkdownError::parse_error(position, "Syntax error");
+        assert_eq!(parse_error.position(), Some(position));
+        assert!(parse_error.is_recoverable());
+
+        let transform_error = MarkdownError::transform_error("Transform failed");
+        assert_eq!(transform_error.position(), None);
+        assert!(!transform_error.is_recoverable());
+
+        let generation_error = MarkdownError::generation_error("Generation failed");
+        assert_eq!(generation_error.position(), None);
+        assert!(!generation_error.is_recoverable());
+    }
+
+    #[test]
+    fn test_error_conversions() {
+        // Test IO error conversion
+        let io_error = std::io::Error::new(std::io::ErrorKind::NotFound, "File not found");
+        let markdown_error: MarkdownError = io_error.into();
+        assert!(!markdown_error.is_recoverable());
+
+        // Test UTF-8 error conversion with invalid continuation byte
+        let mut invalid_utf8 = vec![0xC0, 0x80]; // Invalid UTF-8: overlong encoding
+        invalid_utf8[0] = 0xFF; // Make it definitely invalid at runtime
+        let utf8_error = std::str::from_utf8(&invalid_utf8).unwrap_err();
+        let markdown_error: MarkdownError = utf8_error.into();
+        assert!(!markdown_error.is_recoverable());
+    }
+
+    #[test]
     fn test_error_handler() {
         let mut handler = DefaultErrorHandler::new();
         let error_info = ErrorInfo::new(ErrorSeverity::Error, "Test error".to_string());
@@ -230,5 +301,17 @@ mod tests {
         assert_eq!(handler.count_by_severity(ErrorSeverity::Error), 1);
         assert_eq!(handler.count_by_severity(ErrorSeverity::Fatal), 1);
         assert!(handler.has_fatal_errors());
+    }
+
+    #[test]
+    fn test_error_handler_max_errors() {
+        let mut handler = DefaultErrorHandler::with_max_errors(2);
+        let error_info = ErrorInfo::new(ErrorSeverity::Error, "Test error".to_string());
+
+        handler.handle_error(&error_info);
+        assert!(handler.should_continue(ErrorSeverity::Error));
+
+        handler.handle_error(&error_info);
+        assert!(!handler.should_continue(ErrorSeverity::Error));
     }
 }
