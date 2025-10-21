@@ -40,7 +40,10 @@ pub use lexer::{Lexer, Position, Token};
 /// ```
 pub fn to_html(markdown: &str) -> String {
     // 1. Parsing (includes lexical analysis internally)
-    let root = parser::parse(markdown);
+    let root = parser::parse(markdown).unwrap_or_else(|_| ast::Document {
+        blocks: Vec::new(),
+        source_map: ast::SourceMap::new(),
+    });
 
     // 2. AST to DOM conversion (Intermediate Representation)
     let dom = dom::from_ast(root);
@@ -62,7 +65,10 @@ pub fn to_html(markdown: &str) -> String {
 ///
 /// Returns the root Document of the AST
 pub fn parse_markdown(markdown: &str) -> Document {
-    parser::parse(markdown)
+    parser::parse(markdown).unwrap_or_else(|_| ast::Document {
+        blocks: Vec::new(),
+        source_map: ast::SourceMap::new(),
+    })
 }
 
 /// Convert an AST to a DOM representation.
