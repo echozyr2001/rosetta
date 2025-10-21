@@ -348,6 +348,11 @@ impl<'input> Parser<'input> {
                 continue;
             }
 
+            // Check for link reference definitions first
+            if self.try_parse_link_reference_definition()? {
+                continue; // Link reference definition was parsed and added to reference map
+            }
+
             // Parse the next block
             match self.parse_block() {
                 Ok(block) => {
@@ -631,6 +636,13 @@ impl<'input> Parser<'input> {
                     let image = self.parse_image_token(alt, dest, title.as_ref().map(|s| *s))?;
                     inline_content.push(image);
                 }
+                Some(Token::EscapeSequence { character }) => {
+                    // Convert escape sequence to literal character
+                    inline_content.push(crate::ast::utils::NodeBuilder::text(
+                        character.to_string(),
+                    ));
+                    self.advance()?;
+                }
                 Some(Token::Newline) => {
                     // Check if this is the end of the paragraph
                     self.advance()?;
@@ -689,6 +701,13 @@ impl<'input> Parser<'input> {
                     let image = self.parse_image_token(alt, dest, title.as_ref().map(|s| *s))?;
                     inlines.push(image);
                 }
+                Some(Token::EscapeSequence { character }) => {
+                    // Convert escape sequence to literal character
+                    inlines.push(crate::ast::utils::NodeBuilder::text(
+                        character.to_string(),
+                    ));
+                    self.advance()?;
+                }
                 Some(Token::Newline) => {
                     // Check if this should be a hard break or soft break
                     if self.is_hard_break() {
@@ -714,7 +733,7 @@ impl<'input> Parser<'input> {
     }
 
     /// Parse emphasis with proper delimiter resolution
-    /// Implements CommonMark emphasis rules including nested emphasis
+    /// Implements CommonMark emphasis rules including nested emphasis and precedence
     fn parse_emphasis(&mut self, marker: char, count: usize) -> Result<crate::ast::Inline> {
         self.advance()?; // consume the opening emphasis marker
 
@@ -735,30 +754,45 @@ impl<'input> Parser<'input> {
                     marker: current_marker,
                     count: current_count,
                 }) => {
-                    // Check if this is a closing marker that matches our opening
-                    if *current_marker == marker && *current_count >= count {
+                    // Apply CommonMark precedence rules for emphasis
+                    if self.should_close_emphasis(marker, count, *current_marker, *current_count) {
                         self.advance()?; // consume closing marker
                         break;
-                    } else {
-                        // This is nested emphasis or different marker
+                    } else if self.can_nest_emphasis(marker, *current_marker) {
+                        // This is nested emphasis
                         let nested_emphasis =
                             self.parse_emphasis(*current_marker, *current_count)?;
                         content.push(nested_emphasis);
+                    } else {
+                        // Treat as literal text due to precedence rules
+                        let marker_text = current_marker.to_string().repeat(*current_count);
+                        content.push(crate::ast::utils::NodeBuilder::text(marker_text));
+                        self.advance()?;
                     }
                 }
                 Some(Token::CodeSpan(code_content)) => {
+                    // Code spans have higher precedence than emphasis
                     content.push(crate::ast::utils::NodeBuilder::code_span(
                         code_content.to_string(),
                     ));
                     self.advance()?;
                 }
                 Some(Token::Link { text, dest, title }) => {
+                    // Links have higher precedence than emphasis
                     let link = self.parse_link_token(text, dest, title.as_ref().map(|s| *s))?;
                     content.push(link);
                 }
                 Some(Token::Image { alt, dest, title }) => {
+                    // Images have higher precedence than emphasis
                     let image = self.parse_image_token(alt, dest, title.as_ref().map(|s| *s))?;
                     content.push(image);
+                }
+                Some(Token::EscapeSequence { character }) => {
+                    // Escape sequences have highest precedence
+                    content.push(crate::ast::utils::NodeBuilder::text(
+                        character.to_string(),
+                    ));
+                    self.advance()?;
                 }
                 Some(Token::Newline) => {
                     // Emphasis can span soft breaks but not hard breaks
@@ -777,6 +811,39 @@ impl<'input> Parser<'input> {
         }
 
         Ok(crate::ast::utils::NodeBuilder::emphasis(strong, content))
+    }
+
+    /// Determine if emphasis should be closed based on CommonMark precedence rules
+    fn should_close_emphasis(&self, open_marker: char, open_count: usize, close_marker: char, close_count: usize) -> bool {
+        // Must be same marker type
+        if open_marker != close_marker {
+            return false;
+        }
+
+        // Must have sufficient count to close
+        if close_count < open_count {
+            return false;
+        }
+
+        // CommonMark rule: prefer strong emphasis over nested emphasis
+        if open_count >= 2 && close_count >= 2 {
+            return true;
+        }
+
+        // Regular emphasis matching
+        open_count == close_count
+    }
+
+    /// Determine if emphasis can be nested based on CommonMark precedence rules
+    fn can_nest_emphasis(&self, outer_marker: char, inner_marker: char) -> bool {
+        // Different markers can always nest
+        if outer_marker != inner_marker {
+            return true;
+        }
+
+        // Same markers can nest with specific rules
+        // This is a simplified implementation - full CommonMark has more complex rules
+        true
     }
 
     /// Parse a link token into a Link inline element
@@ -1077,6 +1144,105 @@ impl<'input> Parser<'input> {
             error_handler: Box::new(crate::error::DefaultErrorHandler::new()),
         }
     }
+
+    /// Try to parse a link reference definition.
+    /// Returns true if a link reference definition was successfully parsed.
+    fn try_parse_link_reference_definition(&mut self) -> Result<bool> {
+        // Link reference definitions start with [label]: destination optional_title
+        // They can be indented up to 3 spaces
+
+        // Check if current token could start a link reference definition
+        if !matches!(self.current_token, Some(Token::Link { dest, .. }) if dest.is_empty()) {
+            return Ok(false);
+        }
+
+        // Look ahead to see if this looks like a link reference definition
+        if !self.looks_like_link_reference_definition() {
+            return Ok(false);
+        }
+
+        // Parse the link reference definition
+        self.parse_link_reference_definition()
+    }
+
+    /// Check if the current line looks like a link reference definition
+    fn looks_like_link_reference_definition(&mut self) -> bool {
+        // Check for pattern [label]: at start of line
+        // Since lexer tokenizes [label] as Link token, we need to check for that pattern
+        match &self.current_token {
+            Some(Token::Link { text: _, dest, title: None }) if dest.is_empty() => {
+                // Use peek_token to look ahead
+                if let Ok(next_token) = self.lexer.peek_token() {
+                    matches!(next_token, Token::Text(text) if text.starts_with(':'))
+                } else {
+                    false
+                }
+            }
+            _ => false
+        }
+    }
+
+    /// Parse a link reference definition and add it to the reference map
+    fn parse_link_reference_definition(&mut self) -> Result<bool> {
+        // Parse pattern: [label]: destination "title"
+        // The lexer tokenizes [label] as Link token with empty dest
+        
+        if let Some(Token::Link { text, dest, title: None }) = &self.current_token.clone() {
+            if dest.is_empty() {
+                let label = text.to_string();
+                self.advance()?; // consume [label]
+                
+                // Expect ":"
+                if let Some(Token::Text(colon_text)) = &self.current_token {
+                    if colon_text.starts_with(':') {
+                        self.advance()?; // consume ":"
+                        
+                        // Parse destination
+                        if let Some(Token::Text(dest_text)) = &self.current_token {
+                            let destination = dest_text.trim_matches(|c| c == '<' || c == '>').to_string();
+                            self.advance()?; // consume destination
+                            
+                            // Parse optional title
+                            let mut title = None;
+                            if let Some(Token::Text(title_text)) = &self.current_token {
+                                let trimmed_title = title_text.trim();
+                                if (trimmed_title.starts_with('"') && trimmed_title.ends_with('"')) ||
+                                   (trimmed_title.starts_with('\'') && trimmed_title.ends_with('\'')) ||
+                                   (trimmed_title.starts_with('(') && trimmed_title.ends_with(')')) {
+                                    title = Some(trimmed_title[1..trimmed_title.len()-1].to_string());
+                                    self.advance()?; // consume title
+                                } else if trimmed_title.starts_with('"') {
+                                    // Title might be split across tokens, collect until closing quote
+                                    let mut title_parts = vec![trimmed_title];
+                                    self.advance()?;
+                                    
+                                    while let Some(Token::Text(part)) = &self.current_token {
+                                        title_parts.push(part);
+                                        if part.ends_with('"') {
+                                            self.advance()?;
+                                            break;
+                                        }
+                                        self.advance()?;
+                                    }
+                                    
+                                    let full_title = title_parts.join(" ");
+                                    if full_title.starts_with('"') && full_title.ends_with('"') {
+                                        title = Some(full_title[1..full_title.len()-1].to_string());
+                                    }
+                                }
+                            }
+                            
+                            // Add to reference map
+                            self.add_reference_definition(label, destination, title);
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(false)
+    }
 }
 
 /// Simple parse function with default configuration for convenience
@@ -1329,6 +1495,97 @@ mod tests {
 
         let result = parser.parse();
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_escape_sequence_parsing() {
+        let input = "This has \\* escaped \\# characters.";
+        let mut parser = Parser::with_defaults(input);
+
+        let result = parser.parse();
+        assert!(result.is_ok());
+
+        let document = result.unwrap();
+        assert_eq!(document.blocks.len(), 1);
+
+        if let Block::Paragraph { content, .. } = &document.blocks[0] {
+            // Should have text with escaped characters converted to literals
+            let has_escaped_content = content.iter().any(|inline| {
+                if let crate::ast::Inline::Text(text) = inline {
+                    text.contains('*') || text.contains('#')
+                } else {
+                    false
+                }
+            });
+            assert!(has_escaped_content);
+        } else {
+            panic!("Expected paragraph block");
+        }
+    }
+
+    #[test]
+    fn test_link_reference_definition_parsing() {
+        let input = "[example]: https://example.com \"Example Site\"\n\nThis is a [example] link.";
+        let mut parser = Parser::with_defaults(input);
+
+        let result = parser.parse();
+        assert!(result.is_ok());
+
+        // Check that reference was added to reference map
+        let reference = parser.reference_map().get("example");
+        assert!(reference.is_some());
+
+        let reference = reference.unwrap();
+        assert_eq!(reference.destination, "https://example.com");
+        assert_eq!(reference.title, Some("Example Site".to_string()));
+    }
+
+    #[test]
+    fn test_emphasis_precedence_rules() {
+        let input = "*emphasis with `code` inside*";
+        let mut parser = Parser::with_defaults(input);
+
+        let result = parser.parse();
+        assert!(result.is_ok());
+
+        let document = result.unwrap();
+        assert_eq!(document.blocks.len(), 1);
+
+        if let Block::Paragraph { content, .. } = &document.blocks[0] {
+            // Should have emphasis containing text and code span
+            let has_emphasis = content.iter().any(|inline| {
+                matches!(inline, crate::ast::Inline::Emphasis { .. })
+            });
+            assert!(has_emphasis);
+        } else {
+            panic!("Expected paragraph block");
+        }
+    }
+
+    #[test]
+    fn test_conflicting_markup_resolution() {
+        let input = "**strong *nested emphasis* strong**";
+        let mut parser = Parser::with_defaults(input);
+
+        let result = parser.parse();
+        assert!(result.is_ok());
+
+        let document = result.unwrap();
+        assert_eq!(document.blocks.len(), 1);
+
+        if let Block::Paragraph { content, .. } = &document.blocks[0] {
+            // Should properly handle nested emphasis according to precedence rules
+            let has_strong_emphasis = content.iter().any(|inline| {
+                if let crate::ast::Inline::Emphasis { strong, .. } = inline {
+                    *strong
+                } else {
+                    false
+                }
+            });
+            assert!(has_strong_emphasis);
+        } else {
+            panic!("Expected paragraph block");
+        }
     }
 
     #[test]

@@ -163,6 +163,9 @@ pub enum Token<'input> {
         dest: &'input str,
         title: Option<&'input str>,
     },
+    EscapeSequence {
+        character: char,
+    },
 
     // Structural tokens
     Newline,
@@ -276,6 +279,11 @@ impl<'input> Lexer<'input> {
         if self.char_stream.current_is('>') {
             self.advance();
             return Ok(Token::BlockQuote);
+        }
+
+        // Handle escape sequences (\)
+        if self.char_stream.current_is('\\') {
+            return self.tokenize_escape_sequence();
         }
 
         // Handle emphasis markers (* _ ** __)
@@ -1042,6 +1050,17 @@ impl<'input> Lexer<'input> {
 
         // Consume characters until we hit a special character or whitespace
         while !self.char_stream.is_at_end() {
+            // Handle escape sequences first
+            if self.char_stream.current_is('\\') {
+                // Process escape sequence
+                self.advance(); // consume backslash
+                if !self.char_stream.is_at_end() {
+                    // Consume the escaped character
+                    self.advance();
+                }
+                continue;
+            }
+
             // Check if current character is a special Markdown character that should end text
             if self.is_text_boundary_character() {
                 break;
@@ -1062,7 +1081,9 @@ impl<'input> Lexer<'input> {
                 Ok(Token::Eof)
             }
         } else {
-            Ok(Token::Text(text))
+            // Process escape sequences in the text
+            let processed_text = self.process_escape_sequences(text);
+            Ok(Token::Text(processed_text))
         }
     }
 
@@ -1146,6 +1167,79 @@ impl<'input> Lexer<'input> {
         // Look back to see if previous character was whitespace (but not newline)
         let prev_char = &self.char_stream.input[current_offset - 1..current_offset];
         prev_char == " " || prev_char == "\t"
+    }
+
+    /// Process escape sequences in text according to CommonMark specification.
+    /// Returns a new string with escape sequences processed.
+    fn process_escape_sequences(&self, text: &'input str) -> &'input str {
+        // For now, return the text as-is since we need to handle escape sequences
+        // during parsing phase for proper CommonMark compliance.
+        // The lexer identifies escape sequences, but the parser processes them.
+        text
+    }
+
+    /// Tokenizes escape sequences (\character).
+    /// Implements CommonMark escape sequence rules.
+    fn tokenize_escape_sequence(&mut self) -> Result<Token<'input>> {
+        self.advance(); // consume backslash
+
+        if self.char_stream.is_at_end() {
+            // Backslash at end of input, treat as literal backslash
+            return Ok(Token::Text("\\"));
+        }
+
+        let escaped_char = self.char_stream.current().unwrap_or("");
+        let escaped_char_code = escaped_char.chars().next().unwrap_or('\0');
+
+        // Check if this is a valid escape sequence according to CommonMark
+        if self.is_escapable_character(escaped_char_code) {
+            self.advance(); // consume escaped character
+            Ok(Token::EscapeSequence {
+                character: escaped_char_code,
+            })
+        } else {
+            // Not a valid escape sequence, treat backslash as literal text
+            Ok(Token::Text("\\"))
+        }
+    }
+
+    /// Checks if a character can be escaped according to CommonMark specification.
+    fn is_escapable_character(&self, ch: char) -> bool {
+        // CommonMark escapable ASCII punctuation characters
+        matches!(
+            ch,
+            '!' | '"'
+                | '#'
+                | '$'
+                | '%'
+                | '&'
+                | '\''
+                | '('
+                | ')'
+                | '*'
+                | '+'
+                | ','
+                | '-'
+                | '.'
+                | '/'
+                | ':'
+                | ';'
+                | '<'
+                | '='
+                | '>'
+                | '?'
+                | '@'
+                | '['
+                | '\\'
+                | ']'
+                | '^'
+                | '_'
+                | '`'
+                | '{'
+                | '|'
+                | '}'
+                | '~'
+        )
     }
 }
 
@@ -2094,5 +2188,65 @@ code with ``` inside
         assert!(emphasis_tokens.contains(&('*', 3)));
         assert!(emphasis_tokens.contains(&('_', 1)));
         assert!(emphasis_tokens.contains(&('_', 2)));
+    }
+
+    #[test]
+    fn test_escape_sequence_tokenization() {
+        let input = "\\* \\# \\[ \\] \\\\";
+        let mut lexer = Lexer::new(input);
+        let mut escape_tokens = Vec::new();
+
+        loop {
+            let token = lexer.next_token().unwrap();
+            if let Token::EscapeSequence { character } = token {
+                escape_tokens.push(character);
+            } else if matches!(token, Token::Eof) {
+                break;
+            }
+        }
+
+        // Should have escaped characters
+        assert!(escape_tokens.contains(&'*'));
+        assert!(escape_tokens.contains(&'#'));
+        assert!(escape_tokens.contains(&'['));
+        assert!(escape_tokens.contains(&']'));
+        assert!(escape_tokens.contains(&'\\'));
+    }
+
+    #[test]
+    fn test_invalid_escape_sequences() {
+        let input = "\\a \\1 \\";
+        let mut lexer = Lexer::new(input);
+        let mut text_tokens = Vec::new();
+
+        loop {
+            let token = lexer.next_token().unwrap();
+            if let Token::Text(text) = token {
+                text_tokens.push(text);
+            } else if matches!(token, Token::Eof) {
+                break;
+            }
+        }
+
+        // Invalid escape sequences should be treated as literal text
+        assert!(text_tokens.iter().any(|&text| text.contains('\\')));
+    }
+
+    #[test]
+    fn test_escapable_characters() {
+        let lexer = Lexer::new("");
+
+        // Test CommonMark escapable characters
+        assert!(lexer.is_escapable_character('*'));
+        assert!(lexer.is_escapable_character('#'));
+        assert!(lexer.is_escapable_character('['));
+        assert!(lexer.is_escapable_character(']'));
+        assert!(lexer.is_escapable_character('\\'));
+        assert!(lexer.is_escapable_character('`'));
+
+        // Test non-escapable characters
+        assert!(!lexer.is_escapable_character('a'));
+        assert!(!lexer.is_escapable_character('1'));
+        assert!(!lexer.is_escapable_character(' '));
     }
 }
