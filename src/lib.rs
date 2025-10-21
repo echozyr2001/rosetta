@@ -7,7 +7,7 @@ pub mod lexer;
 pub mod parser;
 
 // Re-export key types for public API
-pub use ast::{Node, Visitable, Document, Block, Inline, Visitor};
+pub use ast::{Block, Document, Inline, Node, Visitable, Visitor};
 pub use dom::DomNode;
 pub use error::{MarkdownError, Result};
 pub use lexer::{Lexer, Position, Token};

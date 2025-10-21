@@ -1,4 +1,4 @@
-use crate::ast::{Document, Block, Inline, SourceMap};
+use crate::ast::{Block, Document, Inline, SourceMap};
 
 /// Parses a Markdown string into an Abstract Syntax Tree (AST).
 ///

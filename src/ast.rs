@@ -6,22 +6,31 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 pub trait Node {
     /// Get source position if available
     fn source_position(&self) -> Option<Position>;
-    
+
     /// Get a reference to Any for downcasting
     fn as_any(&self) -> &dyn std::any::Any;
 }
 
 /// Trait for visitor pattern support - separate from Node to maintain dyn compatibility
 pub trait Visitable {
-    /// Accept a visitor for traversal
+    /// Accept a visitor for immutable traversal
     fn accept<V: Visitor>(&self, visitor: &mut V);
+    /// Accept a mutable visitor for traversal with modification capabilities
+    fn accept_mut<V: MutVisitor>(&mut self, visitor: &mut V);
 }
 
-/// Visitor trait for AST traversal
+/// Visitor trait for immutable AST traversal
 pub trait Visitor {
     fn visit_document(&mut self, document: &Document);
     fn visit_block(&mut self, block: &Block);
     fn visit_inline(&mut self, inline: &Inline);
+}
+
+/// Mutable visitor trait for AST traversal with modification capabilities
+pub trait MutVisitor {
+    fn visit_document(&mut self, document: &mut Document);
+    fn visit_block(&mut self, block: &mut Block);
+    fn visit_inline(&mut self, inline: &mut Inline);
 }
 
 /// Root document node containing the entire parsed Markdown document
@@ -35,42 +44,40 @@ pub struct Document {
 #[derive(Debug, Clone)]
 pub enum Block {
     /// ATX or Setext heading with level (1-6) and inline content
-    Heading { 
-        level: u8, 
-        content: Vec<Inline>, 
+    Heading {
+        level: u8,
+        content: Vec<Inline>,
         id: Option<String>,
         position: Option<Position>,
     },
     /// Paragraph containing inline elements
-    Paragraph { 
+    Paragraph {
         content: Vec<Inline>,
         position: Option<Position>,
     },
     /// Fenced or indented code block
-    CodeBlock { 
-        info: Option<String>, 
-        content: String, 
+    CodeBlock {
+        info: Option<String>,
+        content: String,
         language: Option<String>,
         position: Option<Position>,
     },
     /// Blockquote containing nested blocks
-    BlockQuote { 
+    BlockQuote {
         content: Vec<Block>,
         position: Option<Position>,
     },
     /// Ordered or unordered list
-    List { 
-        kind: ListKind, 
-        tight: bool, 
+    List {
+        kind: ListKind,
+        tight: bool,
         items: Vec<ListItem>,
         position: Option<Position>,
     },
     /// Thematic break (horizontal rule)
-    ThematicBreak {
-        position: Option<Position>,
-    },
+    ThematicBreak { position: Option<Position> },
     /// Raw HTML block
-    HtmlBlock { 
+    HtmlBlock {
         content: String,
         position: Option<Position>,
     },
@@ -82,23 +89,20 @@ pub enum Inline {
     /// Plain text content
     Text(String),
     /// Emphasis (italic) or strong emphasis (bold)
-    Emphasis { 
-        strong: bool, 
-        content: Vec<Inline> 
-    },
+    Emphasis { strong: bool, content: Vec<Inline> },
     /// Inline code span
     Code(String),
     /// Link with text, destination, and optional title
-    Link { 
-        text: Vec<Inline>, 
-        destination: String, 
-        title: Option<String> 
+    Link {
+        text: Vec<Inline>,
+        destination: String,
+        title: Option<String>,
     },
     /// Image with alt text, destination, and optional title
-    Image { 
-        alt: String, 
-        destination: String, 
-        title: Option<String> 
+    Image {
+        alt: String,
+        destination: String,
+        title: Option<String>,
     },
     /// Raw HTML inline
     HtmlInline(String),
@@ -161,7 +165,7 @@ impl Node for Document {
     fn source_position(&self) -> Option<Position> {
         None // Document doesn't have a specific position
     }
-    
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -175,22 +179,29 @@ impl Visitable for Document {
             block.accept(visitor);
         }
     }
+
+    fn accept_mut<V: MutVisitor>(&mut self, visitor: &mut V) {
+        visitor.visit_document(self);
+        for block in &mut self.blocks {
+            block.accept_mut(visitor);
+        }
+    }
 }
 
 // Implement Node trait for Block
 impl Node for Block {
     fn source_position(&self) -> Option<Position> {
         match self {
-            Block::Heading { position, .. } |
-            Block::Paragraph { position, .. } |
-            Block::CodeBlock { position, .. } |
-            Block::BlockQuote { position, .. } |
-            Block::List { position, .. } |
-            Block::ThematicBreak { position, .. } |
-            Block::HtmlBlock { position, .. } => *position,
+            Block::Heading { position, .. }
+            | Block::Paragraph { position, .. }
+            | Block::CodeBlock { position, .. }
+            | Block::BlockQuote { position, .. }
+            | Block::List { position, .. }
+            | Block::ThematicBreak { position, .. }
+            | Block::HtmlBlock { position, .. } => *position,
         }
     }
-    
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -228,6 +239,37 @@ impl Visitable for Block {
             }
         }
     }
+
+    fn accept_mut<V: MutVisitor>(&mut self, visitor: &mut V) {
+        visitor.visit_block(self);
+        match self {
+            Block::Heading { content, .. } => {
+                for inline in content {
+                    inline.accept_mut(visitor);
+                }
+            }
+            Block::Paragraph { content, .. } => {
+                for inline in content {
+                    inline.accept_mut(visitor);
+                }
+            }
+            Block::BlockQuote { content, .. } => {
+                for block in content {
+                    block.accept_mut(visitor);
+                }
+            }
+            Block::List { items, .. } => {
+                for item in items {
+                    for block in &mut item.content {
+                        block.accept_mut(visitor);
+                    }
+                }
+            }
+            Block::CodeBlock { .. } | Block::ThematicBreak { .. } | Block::HtmlBlock { .. } => {
+                // These blocks don't have child nodes
+            }
+        }
+    }
 }
 
 // Implement Node trait for Inline
@@ -235,7 +277,7 @@ impl Node for Inline {
     fn source_position(&self) -> Option<Position> {
         None // Inline elements don't currently track positions
     }
-    
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -256,8 +298,36 @@ impl Visitable for Inline {
                     inline.accept(visitor);
                 }
             }
-            Inline::Text(_) | Inline::Code(_) | Inline::Image { .. } | 
-            Inline::HtmlInline(_) | Inline::SoftBreak | Inline::HardBreak => {
+            Inline::Text(_)
+            | Inline::Code(_)
+            | Inline::Image { .. }
+            | Inline::HtmlInline(_)
+            | Inline::SoftBreak
+            | Inline::HardBreak => {
+                // These inlines don't have child nodes
+            }
+        }
+    }
+
+    fn accept_mut<V: MutVisitor>(&mut self, visitor: &mut V) {
+        visitor.visit_inline(self);
+        match self {
+            Inline::Emphasis { content, .. } => {
+                for inline in content {
+                    inline.accept_mut(visitor);
+                }
+            }
+            Inline::Link { text, .. } => {
+                for inline in text {
+                    inline.accept_mut(visitor);
+                }
+            }
+            Inline::Text(_)
+            | Inline::Code(_)
+            | Inline::Image { .. }
+            | Inline::HtmlInline(_)
+            | Inline::SoftBreak
+            | Inline::HardBreak => {
                 // These inlines don't have child nodes
             }
         }
@@ -275,7 +345,7 @@ impl ReferenceMap {
     pub fn insert(&mut self, label: String, reference: LinkReference) {
         self.definitions.insert(label.to_lowercase(), reference);
     }
-    
+
     pub fn get(&self, label: &str) -> Option<&LinkReference> {
         self.definitions.get(&label.to_lowercase())
     }
@@ -288,11 +358,11 @@ impl SourceMap {
             positions: HashMap::new(),
         }
     }
-    
+
     pub fn insert(&mut self, node_id: NodeId, position: Position) {
         self.positions.insert(node_id, position);
     }
-    
+
     pub fn get(&self, node_id: NodeId) -> Option<Position> {
         self.positions.get(&node_id).copied()
     }
@@ -738,6 +808,9 @@ pub mod utils {
     /// AST traversal utilities implementing depth-first and breadth-first iteration
     pub struct Traversal;
 
+    /// Visitor-based traversal utilities
+    pub struct VisitorTraversal;
+
     impl Traversal {
         /// Perform depth-first traversal of the document
         pub fn depth_first<F>(document: &Document, mut visit_fn: F)
@@ -951,6 +1024,174 @@ pub mod utils {
             }
         }
     }
+
+    impl VisitorTraversal {
+        /// Perform depth-first traversal using visitor pattern
+        pub fn depth_first_visitor<V: Visitor>(document: &Document, visitor: &mut V) {
+            Self::depth_first_document(document, visitor);
+        }
+
+        /// Perform breadth-first traversal using visitor pattern
+        pub fn breadth_first_visitor<V: Visitor>(document: &Document, visitor: &mut V) {
+            let mut queue: VecDeque<VisitorNode> = VecDeque::new();
+            queue.push_back(VisitorNode::Document(document));
+
+            while let Some(node) = queue.pop_front() {
+                match node {
+                    VisitorNode::Document(doc) => {
+                        visitor.visit_document(doc);
+                        for block in &doc.blocks {
+                            queue.push_back(VisitorNode::Block(block));
+                        }
+                    }
+                    VisitorNode::Block(block) => {
+                        visitor.visit_block(block);
+                        match block {
+                            Block::Heading { content, .. } | Block::Paragraph { content, .. } => {
+                                for inline in content {
+                                    queue.push_back(VisitorNode::Inline(inline));
+                                }
+                            }
+                            Block::BlockQuote { content, .. } => {
+                                for child_block in content {
+                                    queue.push_back(VisitorNode::Block(child_block));
+                                }
+                            }
+                            Block::List { items, .. } => {
+                                for item in items {
+                                    for child_block in &item.content {
+                                        queue.push_back(VisitorNode::Block(child_block));
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    VisitorNode::Inline(inline) => {
+                        visitor.visit_inline(inline);
+                        match inline {
+                            Inline::Emphasis { content, .. }
+                            | Inline::Link { text: content, .. } => {
+                                for child_inline in content {
+                                    queue.push_back(VisitorNode::Inline(child_inline));
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+
+        /// Perform depth-first traversal using mutable visitor pattern
+        pub fn depth_first_mut_visitor<V: MutVisitor>(document: &mut Document, visitor: &mut V) {
+            Self::depth_first_document_mut(document, visitor);
+        }
+
+        /// Perform breadth-first traversal using mutable visitor pattern
+        /// Note: Due to Rust's borrowing rules, mutable breadth-first traversal
+        /// uses the accept_mut method which provides depth-first semantics
+        pub fn breadth_first_mut_visitor<V: MutVisitor>(document: &mut Document, visitor: &mut V) {
+            // For mutable visitors, we use the accept_mut method which provides
+            // depth-first traversal due to Rust's borrowing constraints
+            document.accept_mut(visitor);
+        }
+
+        // Helper functions for depth-first traversal
+        fn depth_first_document<V: Visitor>(document: &Document, visitor: &mut V) {
+            visitor.visit_document(document);
+            for block in &document.blocks {
+                Self::depth_first_block(block, visitor);
+            }
+        }
+
+        fn depth_first_block<V: Visitor>(block: &Block, visitor: &mut V) {
+            visitor.visit_block(block);
+            match block {
+                Block::Heading { content, .. } | Block::Paragraph { content, .. } => {
+                    for inline in content {
+                        Self::depth_first_inline(inline, visitor);
+                    }
+                }
+                Block::BlockQuote { content, .. } => {
+                    for child_block in content {
+                        Self::depth_first_block(child_block, visitor);
+                    }
+                }
+                Block::List { items, .. } => {
+                    for item in items {
+                        for child_block in &item.content {
+                            Self::depth_first_block(child_block, visitor);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        fn depth_first_inline<V: Visitor>(inline: &Inline, visitor: &mut V) {
+            visitor.visit_inline(inline);
+            match inline {
+                Inline::Emphasis { content, .. } | Inline::Link { text: content, .. } => {
+                    for child_inline in content {
+                        Self::depth_first_inline(child_inline, visitor);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Helper functions for mutable depth-first traversal
+        fn depth_first_document_mut<V: MutVisitor>(document: &mut Document, visitor: &mut V) {
+            visitor.visit_document(document);
+            for block in &mut document.blocks {
+                Self::depth_first_block_mut(block, visitor);
+            }
+        }
+
+        fn depth_first_block_mut<V: MutVisitor>(block: &mut Block, visitor: &mut V) {
+            visitor.visit_block(block);
+            match block {
+                Block::Heading { content, .. } | Block::Paragraph { content, .. } => {
+                    for inline in content {
+                        Self::depth_first_inline_mut(inline, visitor);
+                    }
+                }
+                Block::BlockQuote { content, .. } => {
+                    for child_block in content {
+                        Self::depth_first_block_mut(child_block, visitor);
+                    }
+                }
+                Block::List { items, .. } => {
+                    for item in items {
+                        for child_block in &mut item.content {
+                            Self::depth_first_block_mut(child_block, visitor);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        fn depth_first_inline_mut<V: MutVisitor>(inline: &mut Inline, visitor: &mut V) {
+            visitor.visit_inline(inline);
+            match inline {
+                Inline::Emphasis { content, .. } | Inline::Link { text: content, .. } => {
+                    for child_inline in content {
+                        Self::depth_first_inline_mut(child_inline, visitor);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Helper enum for visitor-based traversal
+    enum VisitorNode<'a> {
+        Document(&'a Document),
+        Block(&'a Block),
+        Inline(&'a Inline),
+    }
 }
 
 #[cfg(test)]
@@ -969,7 +1210,11 @@ mod tests {
 
         let paragraph = utils::NodeBuilder::paragraph(
             vec![emphasis],
-            Some(Position { line: 1, column: 1, offset: 0 })
+            Some(Position {
+                line: 1,
+                column: 1,
+                offset: 0,
+            }),
         );
         assert!(matches!(paragraph, Block::Paragraph { .. }));
 
@@ -1027,14 +1272,18 @@ mod tests {
 
     #[test]
     fn test_position_mapping() {
-        let position = Position { line: 1, column: 5, offset: 4 };
+        let position = Position {
+            line: 1,
+            column: 5,
+            offset: 4,
+        };
         let text = utils::NodeBuilder::text("Hello".to_string());
         let paragraph = utils::NodeBuilder::paragraph(vec![text], Some(position));
         let document = utils::NodeBuilder::document(vec![paragraph]);
 
         // Test source map creation
         let _source_map = utils::PositionMapper::create_source_map(&document);
-        
+
         // Test finding nodes at position
         let matching_nodes = utils::PositionMapper::find_nodes_at_position(&document, position);
         assert!(matching_nodes.len() > 0);
@@ -1046,5 +1295,190 @@ mod tests {
         let id2 = generate_node_id();
         assert_ne!(id1, id2);
         assert!(id2 > id1);
+    }
+
+    #[test]
+    fn test_visitor_pattern() {
+        // Create a test document with nested structure
+        let text1 = utils::NodeBuilder::text("Hello".to_string());
+        let text2 = utils::NodeBuilder::text("World".to_string());
+        let emphasis = utils::NodeBuilder::emphasis(false, vec![text2]);
+        let paragraph = utils::NodeBuilder::paragraph(vec![text1, emphasis], None);
+        let document = utils::NodeBuilder::document(vec![paragraph]);
+
+        // Test immutable visitor
+        struct CountingVisitor {
+            document_count: usize,
+            block_count: usize,
+            inline_count: usize,
+        }
+
+        impl Visitor for CountingVisitor {
+            fn visit_document(&mut self, _document: &Document) {
+                self.document_count += 1;
+            }
+
+            fn visit_block(&mut self, _block: &Block) {
+                self.block_count += 1;
+            }
+
+            fn visit_inline(&mut self, _inline: &Inline) {
+                self.inline_count += 1;
+            }
+        }
+
+        let mut visitor = CountingVisitor {
+            document_count: 0,
+            block_count: 0,
+            inline_count: 0,
+        };
+
+        document.accept(&mut visitor);
+
+        assert_eq!(visitor.document_count, 1);
+        assert_eq!(visitor.block_count, 1);
+        assert_eq!(visitor.inline_count, 3); // "Hello", emphasis, and "World" inside emphasis
+    }
+
+    #[test]
+    fn test_mutable_visitor_pattern() {
+        // Create a test document
+        let text = utils::NodeBuilder::text("hello".to_string());
+        let paragraph = utils::NodeBuilder::paragraph(vec![text], None);
+        let mut document = utils::NodeBuilder::document(vec![paragraph]);
+
+        // Test mutable visitor that capitalizes text
+        struct CapitalizingVisitor;
+
+        impl MutVisitor for CapitalizingVisitor {
+            fn visit_document(&mut self, _document: &mut Document) {
+                // No action needed for document
+            }
+
+            fn visit_block(&mut self, _block: &mut Block) {
+                // No action needed for block
+            }
+
+            fn visit_inline(&mut self, inline: &mut Inline) {
+                if let Inline::Text(text) = inline {
+                    *text = text.to_uppercase();
+                }
+            }
+        }
+
+        let mut visitor = CapitalizingVisitor;
+        document.accept_mut(&mut visitor);
+
+        // Check that text was capitalized
+        if let Block::Paragraph { content, .. } = &document.blocks[0] {
+            if let Inline::Text(text) = &content[0] {
+                assert_eq!(text, "HELLO");
+            } else {
+                panic!("Expected text inline");
+            }
+        } else {
+            panic!("Expected paragraph block");
+        }
+    }
+
+    #[test]
+    fn test_depth_first_visitor_traversal() {
+        // Create a document with nested structure
+        let text1 = utils::NodeBuilder::text("First".to_string());
+        let text2 = utils::NodeBuilder::text("Second".to_string());
+        let emphasis = utils::NodeBuilder::emphasis(false, vec![text2]);
+        let paragraph = utils::NodeBuilder::paragraph(vec![text1, emphasis], None);
+        let document = utils::NodeBuilder::document(vec![paragraph]);
+
+        // Test depth-first traversal order
+        struct OrderTrackingVisitor {
+            visit_order: Vec<String>,
+        }
+
+        impl Visitor for OrderTrackingVisitor {
+            fn visit_document(&mut self, _document: &Document) {
+                self.visit_order.push("Document".to_string());
+            }
+
+            fn visit_block(&mut self, block: &Block) {
+                match block {
+                    Block::Paragraph { .. } => self.visit_order.push("Paragraph".to_string()),
+                    _ => {}
+                }
+            }
+
+            fn visit_inline(&mut self, inline: &Inline) {
+                match inline {
+                    Inline::Text(text) => self.visit_order.push(format!("Text({})", text)),
+                    Inline::Emphasis { .. } => self.visit_order.push("Emphasis".to_string()),
+                    _ => {}
+                }
+            }
+        }
+
+        let mut visitor = OrderTrackingVisitor {
+            visit_order: Vec::new(),
+        };
+
+        utils::VisitorTraversal::depth_first_visitor(&document, &mut visitor);
+
+        // Verify depth-first order: Document -> Paragraph -> Text(First) -> Emphasis -> Text(Second)
+        assert_eq!(visitor.visit_order.len(), 5);
+        assert_eq!(visitor.visit_order[0], "Document");
+        assert_eq!(visitor.visit_order[1], "Paragraph");
+        assert_eq!(visitor.visit_order[2], "Text(First)");
+        assert_eq!(visitor.visit_order[3], "Emphasis");
+        assert_eq!(visitor.visit_order[4], "Text(Second)");
+    }
+
+    #[test]
+    fn test_breadth_first_visitor_traversal() {
+        // Create a document with nested structure
+        let text1 = utils::NodeBuilder::text("First".to_string());
+        let text2 = utils::NodeBuilder::text("Second".to_string());
+        let emphasis = utils::NodeBuilder::emphasis(false, vec![text2]);
+        let paragraph = utils::NodeBuilder::paragraph(vec![text1, emphasis], None);
+        let document = utils::NodeBuilder::document(vec![paragraph]);
+
+        // Test breadth-first traversal order
+        struct OrderTrackingVisitor {
+            visit_order: Vec<String>,
+        }
+
+        impl Visitor for OrderTrackingVisitor {
+            fn visit_document(&mut self, _document: &Document) {
+                self.visit_order.push("Document".to_string());
+            }
+
+            fn visit_block(&mut self, block: &Block) {
+                match block {
+                    Block::Paragraph { .. } => self.visit_order.push("Paragraph".to_string()),
+                    _ => {}
+                }
+            }
+
+            fn visit_inline(&mut self, inline: &Inline) {
+                match inline {
+                    Inline::Text(text) => self.visit_order.push(format!("Text({})", text)),
+                    Inline::Emphasis { .. } => self.visit_order.push("Emphasis".to_string()),
+                    _ => {}
+                }
+            }
+        }
+
+        let mut visitor = OrderTrackingVisitor {
+            visit_order: Vec::new(),
+        };
+
+        utils::VisitorTraversal::breadth_first_visitor(&document, &mut visitor);
+
+        // Verify breadth-first order: Document -> Paragraph -> Text(First) -> Emphasis -> Text(Second)
+        assert_eq!(visitor.visit_order.len(), 5);
+        assert_eq!(visitor.visit_order[0], "Document");
+        assert_eq!(visitor.visit_order[1], "Paragraph");
+        // In breadth-first, all inlines at the same level should be visited before their children
+        assert!(visitor.visit_order.contains(&"Text(First)".to_string()));
+        assert!(visitor.visit_order.contains(&"Emphasis".to_string()));
+        assert!(visitor.visit_order.contains(&"Text(Second)".to_string()));
     }
 }
