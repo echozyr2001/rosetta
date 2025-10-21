@@ -1,4 +1,4 @@
-use rosetta::parser::{parse, Parser, ParserConfig};
+use rosetta::parser::{Parser, ParserConfig, parse};
 
 fn main() {
     println!("Testing CommonMark compliance features...\n");
@@ -12,7 +12,8 @@ fn main() {
 
     // Test 2: Link reference definitions
     println!("2. Testing link reference definitions:");
-    let input2 = "[example]: https://example.com \"Example Site\"\n\nThis is a [example] reference link.";
+    let input2 =
+        "[example]: https://example.com \"Example Site\"\n\nThis is a [example] reference link.";
     let mut parser2 = Parser::with_defaults(input2);
     let result2 = parser2.parse().unwrap();
     let reference = parser2.reference_map().get("example");
@@ -31,7 +32,7 @@ fn main() {
     let result3 = parse(input3).unwrap();
     println!("Input: {}", input3);
     println!("Parsed successfully with {} blocks", result3.blocks.len());
-    
+
     if let Some(block) = result3.blocks.first() {
         if let rosetta::ast::Block::Paragraph { content, .. } = block {
             println!("  Paragraph contains {} inline elements", content.len());

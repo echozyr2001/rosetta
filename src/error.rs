@@ -123,9 +123,7 @@ impl Clone for MarkdownError {
             MarkdownError::Io { source } => MarkdownError::Io {
                 source: std::io::Error::new(source.kind(), source.to_string()),
             },
-            MarkdownError::Utf8 { source } => MarkdownError::Utf8 {
-                source: *source,
-            },
+            MarkdownError::Utf8 { source } => MarkdownError::Utf8 { source: *source },
             MarkdownError::FromUtf8 { source } => MarkdownError::FromUtf8 {
                 source: source.clone(),
             },

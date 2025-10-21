@@ -458,6 +458,11 @@ impl<'input> Lexer<'input> {
 
     /// Checks if current position starts an indented code block.
     fn is_indented_code_block(&self) -> bool {
+        // Must be at the start of a line
+        if !self.is_at_line_start() {
+            return false;
+        }
+
         // Must have at least 4 spaces at the start of the line
         let current_offset = self.char_stream.current_offset().unwrap_or(0);
         let remaining = &self.char_stream.input[current_offset..];
