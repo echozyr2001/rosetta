@@ -32,7 +32,7 @@ impl Default for ParserConfig {
 }
 
 /// Parser state for tracking parsing context and recovery
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 struct ParserState {
     /// Current nesting depth
     nesting_depth: usize,
@@ -42,17 +42,6 @@ struct ParserState {
     last_good_position: Position,
     /// Reference definitions collected during parsing
     reference_map: ReferenceMap,
-}
-
-impl Default for ParserState {
-    fn default() -> Self {
-        Self {
-            nesting_depth: 0,
-            in_recovery: false,
-            last_good_position: Position::new(),
-            reference_map: ReferenceMap::new(),
-        }
-    }
 }
 
 /// Main parser struct implementing recursive descent parsing with error recovery
@@ -201,12 +190,12 @@ impl<'input> Parser<'input> {
 
     /// Consumes the current token if it matches the expected type
     fn consume_token(&mut self, expected: Token<'input>) -> Result<Token<'input>> {
-        if let Some(current) = &self.current_token {
-            if std::mem::discriminant(current) == std::mem::discriminant(&expected) {
-                let token = current.clone();
-                self.advance()?;
-                return Ok(token);
-            }
+        if let Some(current) = &self.current_token
+            && std::mem::discriminant(current) == std::mem::discriminant(&expected)
+        {
+            let token = current.clone();
+            self.advance()?;
+            return Ok(token);
         }
 
         Err(MarkdownError::parse_error(
@@ -1197,62 +1186,56 @@ impl<'input> Parser<'input> {
             dest,
             title: None,
         }) = &self.current_token.clone()
+            && dest.is_empty()
         {
-            if dest.is_empty() {
-                let label = text.to_string();
-                self.advance()?; // consume [label]
+            let label = text.to_string();
+            self.advance()?; // consume [label]
 
-                // Expect ":"
-                if let Some(Token::Text(colon_text)) = &self.current_token {
-                    if colon_text.starts_with(':') {
-                        self.advance()?; // consume ":"
+            // Expect ":"
+            if let Some(Token::Text(colon_text)) = &self.current_token
+                && colon_text.starts_with(':')
+            {
+                self.advance()?; // consume ":"
 
-                        // Parse destination
-                        if let Some(Token::Text(dest_text)) = &self.current_token {
-                            let destination =
-                                dest_text.trim_matches(|c| c == '<' || c == '>').to_string();
-                            self.advance()?; // consume destination
+                // Parse destination
+                if let Some(Token::Text(dest_text)) = &self.current_token {
+                    let destination = dest_text.trim_matches(|c| c == '<' || c == '>').to_string();
+                    self.advance()?; // consume destination
 
-                            // Parse optional title
-                            let mut title = None;
-                            if let Some(Token::Text(title_text)) = &self.current_token {
-                                let trimmed_title = title_text.trim();
-                                if (trimmed_title.starts_with('"') && trimmed_title.ends_with('"'))
-                                    || (trimmed_title.starts_with('\'')
-                                        && trimmed_title.ends_with('\''))
-                                    || (trimmed_title.starts_with('(')
-                                        && trimmed_title.ends_with(')'))
-                                {
-                                    title =
-                                        Some(trimmed_title[1..trimmed_title.len() - 1].to_string());
-                                    self.advance()?; // consume title
-                                } else if trimmed_title.starts_with('"') {
-                                    // Title might be split across tokens, collect until closing quote
-                                    let mut title_parts = vec![trimmed_title];
+                    // Parse optional title
+                    let mut title = None;
+                    if let Some(Token::Text(title_text)) = &self.current_token {
+                        let trimmed_title = title_text.trim();
+                        if (trimmed_title.starts_with('"') && trimmed_title.ends_with('"'))
+                            || (trimmed_title.starts_with('\'') && trimmed_title.ends_with('\''))
+                            || (trimmed_title.starts_with('(') && trimmed_title.ends_with(')'))
+                        {
+                            title = Some(trimmed_title[1..trimmed_title.len() - 1].to_string());
+                            self.advance()?; // consume title
+                        } else if trimmed_title.starts_with('"') {
+                            // Title might be split across tokens, collect until closing quote
+                            let mut title_parts = vec![trimmed_title];
+                            self.advance()?;
+
+                            while let Some(Token::Text(part)) = &self.current_token {
+                                title_parts.push(part);
+                                if part.ends_with('"') {
                                     self.advance()?;
-
-                                    while let Some(Token::Text(part)) = &self.current_token {
-                                        title_parts.push(part);
-                                        if part.ends_with('"') {
-                                            self.advance()?;
-                                            break;
-                                        }
-                                        self.advance()?;
-                                    }
-
-                                    let full_title = title_parts.join(" ");
-                                    if full_title.starts_with('"') && full_title.ends_with('"') {
-                                        title =
-                                            Some(full_title[1..full_title.len() - 1].to_string());
-                                    }
+                                    break;
                                 }
+                                self.advance()?;
                             }
 
-                            // Add to reference map
-                            self.add_reference_definition(label, destination, title);
-                            return Ok(true);
+                            let full_title = title_parts.join(" ");
+                            if full_title.starts_with('"') && full_title.ends_with('"') {
+                                title = Some(full_title[1..full_title.len() - 1].to_string());
+                            }
                         }
                     }
+
+                    // Add to reference map
+                    self.add_reference_definition(label, destination, title);
+                    return Ok(true);
                 }
             }
         }
