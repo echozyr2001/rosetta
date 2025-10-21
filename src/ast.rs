@@ -1481,4 +1481,185 @@ mod tests {
         assert!(visitor.visit_order.contains(&"Emphasis".to_string()));
         assert!(visitor.visit_order.contains(&"Text(Second)".to_string()));
     }
+
+    #[test]
+    fn test_complex_nested_structure() {
+        // Test more complex nested structures with blockquotes and lists
+        let text1 = utils::NodeBuilder::text("Item 1".to_string());
+        let text2 = utils::NodeBuilder::text("Item 2".to_string());
+        let paragraph1 = utils::NodeBuilder::paragraph(vec![text1], None);
+        let paragraph2 = utils::NodeBuilder::paragraph(vec![text2], None);
+        
+        let list_item1 = utils::NodeBuilder::list_item(vec![paragraph1], true, None);
+        let list_item2 = utils::NodeBuilder::list_item(vec![paragraph2], true, None);
+        
+        let list = utils::NodeBuilder::list(
+            ListKind::Bullet { marker: '-' },
+            true,
+            vec![list_item1, list_item2],
+            None,
+        );
+        
+        let blockquote = utils::NodeBuilder::blockquote(vec![list], None);
+        let document = utils::NodeBuilder::document(vec![blockquote]);
+
+        // Test relationship management with complex structure
+        assert_eq!(utils::RelationshipManager::count_blocks(&document), 4); // blockquote + list + 2 paragraphs
+        assert_eq!(utils::RelationshipManager::count_inlines(&document), 2); // 2 text inlines
+
+        // Test traversal with complex structure
+        let mut node_count = 0;
+        utils::Traversal::depth_first(&document, |_node| {
+            node_count += 1;
+        });
+        assert_eq!(node_count, 7); // document + blockquote + list + 2 paragraphs + 2 text inlines
+    }
+
+    #[test]
+    fn test_source_position_preservation() {
+        // Test that source positions are properly preserved and accessible
+        let position1 = Position { line: 1, column: 1, offset: 0 };
+        let position2 = Position { line: 2, column: 1, offset: 10 };
+        let position3 = Position { line: 3, column: 5, offset: 25 };
+
+        let text = utils::NodeBuilder::text("Hello".to_string());
+        let paragraph = utils::NodeBuilder::paragraph(vec![text], Some(position1));
+        let code_block = utils::NodeBuilder::code_block(
+            Some("rust".to_string()),
+            "fn main() {}".to_string(),
+            Some("rust".to_string()),
+            Some(position2),
+        );
+        let heading = utils::NodeBuilder::heading(
+            1,
+            vec![utils::NodeBuilder::text("Title".to_string())],
+            Some(position3),
+        );
+
+        let document = utils::NodeBuilder::document(vec![paragraph, code_block, heading]);
+
+        // Verify positions are preserved
+        assert_eq!(document.blocks[0].source_position(), Some(position1));
+        assert_eq!(document.blocks[1].source_position(), Some(position2));
+        assert_eq!(document.blocks[2].source_position(), Some(position3));
+
+        // Test position mapping utilities
+        let _source_map = utils::PositionMapper::create_source_map(&document);
+        let nodes_at_pos1 = utils::PositionMapper::find_nodes_at_position(&document, position1);
+        let nodes_at_pos2 = utils::PositionMapper::find_nodes_at_position(&document, position2);
+        let nodes_at_pos3 = utils::PositionMapper::find_nodes_at_position(&document, position3);
+
+        assert!(!nodes_at_pos1.is_empty());
+        assert!(!nodes_at_pos2.is_empty());
+        assert!(!nodes_at_pos3.is_empty());
+    }
+
+    #[test]
+    fn test_node_type_downcasting() {
+        // Test that nodes can be properly downcast to their concrete types
+        let text = utils::NodeBuilder::text("Hello".to_string());
+        let paragraph = utils::NodeBuilder::paragraph(vec![text], None);
+        let document = utils::NodeBuilder::document(vec![paragraph]);
+
+        // Test downcasting through the Node trait
+        let node: &dyn Node = &document;
+        assert!(node.as_any().downcast_ref::<Document>().is_some());
+        assert!(node.as_any().downcast_ref::<Block>().is_none());
+
+        let block_node: &dyn Node = &document.blocks[0];
+        assert!(block_node.as_any().downcast_ref::<Block>().is_some());
+        assert!(block_node.as_any().downcast_ref::<Document>().is_none());
+    }
+
+    #[test]
+    fn test_list_structures() {
+        // Test different list types and configurations
+        let text1 = utils::NodeBuilder::text("First item".to_string());
+        let text2 = utils::NodeBuilder::text("Second item".to_string());
+        let paragraph1 = utils::NodeBuilder::paragraph(vec![text1], None);
+        let paragraph2 = utils::NodeBuilder::paragraph(vec![text2], None);
+
+        // Test bullet list
+        let bullet_item1 = utils::NodeBuilder::list_item(vec![paragraph1.clone()], true, None);
+        let bullet_item2 = utils::NodeBuilder::list_item(vec![paragraph2.clone()], true, Some(false)); // unchecked task
+        let bullet_list = utils::NodeBuilder::list(
+            ListKind::Bullet { marker: '*' },
+            true,
+            vec![bullet_item1, bullet_item2],
+            None,
+        );
+
+        // Test ordered list
+        let ordered_item1 = utils::NodeBuilder::list_item(vec![paragraph1], false, None);
+        let ordered_item2 = utils::NodeBuilder::list_item(vec![paragraph2], false, Some(true)); // checked task
+        let ordered_list = utils::NodeBuilder::list(
+            ListKind::Ordered { start: 1, delimiter: '.' },
+            false,
+            vec![ordered_item1, ordered_item2],
+            None,
+        );
+
+        let document = utils::NodeBuilder::document(vec![bullet_list, ordered_list]);
+
+        // Verify list structure
+        if let Block::List { kind, tight, items, .. } = &document.blocks[0] {
+            assert!(matches!(kind, ListKind::Bullet { marker: '*' }));
+            assert!(*tight);
+            assert_eq!(items.len(), 2);
+            assert_eq!(items[1].task_list_marker, Some(false));
+        } else {
+            panic!("Expected bullet list");
+        }
+
+        if let Block::List { kind, tight, items, .. } = &document.blocks[1] {
+            assert!(matches!(kind, ListKind::Ordered { start: 1, delimiter: '.' }));
+            assert!(!*tight);
+            assert_eq!(items.len(), 2);
+            assert_eq!(items[1].task_list_marker, Some(true));
+        } else {
+            panic!("Expected ordered list");
+        }
+    }
+
+    #[test]
+    fn test_reference_map() {
+        // Test link reference definition storage and retrieval
+        let mut ref_map = ReferenceMap::new();
+        
+        let link_ref = LinkReference {
+            label: "example".to_string(),
+            destination: "https://example.com".to_string(),
+            title: Some("Example Site".to_string()),
+        };
+
+        ref_map.insert("Example".to_string(), link_ref.clone());
+        
+        // Test case-insensitive lookup
+        assert!(ref_map.get("example").is_some());
+        assert!(ref_map.get("EXAMPLE").is_some());
+        assert!(ref_map.get("Example").is_some());
+        assert!(ref_map.get("nonexistent").is_none());
+
+        let retrieved = ref_map.get("example").unwrap();
+        assert_eq!(retrieved.destination, "https://example.com");
+        assert_eq!(retrieved.title, Some("Example Site".to_string()));
+    }
+
+    #[test]
+    fn test_source_map_operations() {
+        // Test source map insertion and retrieval
+        let mut source_map = SourceMap::new();
+        let position1 = Position { line: 1, column: 1, offset: 0 };
+        let position2 = Position { line: 2, column: 5, offset: 15 };
+
+        let node_id1 = generate_node_id();
+        let node_id2 = generate_node_id();
+
+        source_map.insert(node_id1, position1);
+        source_map.insert(node_id2, position2);
+
+        assert_eq!(source_map.get(node_id1), Some(position1));
+        assert_eq!(source_map.get(node_id2), Some(position2));
+        assert_eq!(source_map.get(999999), None); // Non-existent node ID
+    }
 }
