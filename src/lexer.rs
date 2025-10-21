@@ -1895,10 +1895,28 @@ ___"#;
 
         // Verify we have the expected token types
         let has_atx_heading = tokens.iter().any(|t| matches!(t, Token::AtxHeading { .. }));
-        let has_setext_heading = tokens.iter().any(|t| matches!(t, Token::SetextHeading { .. }));
+        let has_setext_heading = tokens
+            .iter()
+            .any(|t| matches!(t, Token::SetextHeading { .. }));
         let has_blockquote = tokens.iter().any(|t| matches!(t, Token::BlockQuote));
-        let has_bullet_list = tokens.iter().any(|t| matches!(t, Token::ListMarker { kind: ListKind::Bullet { .. }, .. }));
-        let has_ordered_list = tokens.iter().any(|t| matches!(t, Token::ListMarker { kind: ListKind::Ordered { .. }, .. }));
+        let has_bullet_list = tokens.iter().any(|t| {
+            matches!(
+                t,
+                Token::ListMarker {
+                    kind: ListKind::Bullet { .. },
+                    ..
+                }
+            )
+        });
+        let has_ordered_list = tokens.iter().any(|t| {
+            matches!(
+                t,
+                Token::ListMarker {
+                    kind: ListKind::Ordered { .. },
+                    ..
+                }
+            )
+        });
         let has_code_block = tokens.iter().any(|t| matches!(t, Token::CodeBlock { .. }));
         let has_thematic_break = tokens.iter().any(|t| matches!(t, Token::ThematicBreak));
 
@@ -1956,10 +1974,16 @@ ___"#;
         }
 
         // Should have blockquotes and heading
-        let blockquote_count = tokens.iter().filter(|t| matches!(t, Token::BlockQuote)).count();
+        let blockquote_count = tokens
+            .iter()
+            .filter(|t| matches!(t, Token::BlockQuote))
+            .count();
         let has_heading = tokens.iter().any(|t| matches!(t, Token::AtxHeading { .. }));
 
-        assert!(blockquote_count >= 2, "Should have multiple blockquote markers");
+        assert!(
+            blockquote_count >= 2,
+            "Should have multiple blockquote markers"
+        );
         assert!(has_heading, "Should have heading in blockquote");
     }
 
@@ -2035,7 +2059,7 @@ code with ``` inside
         }
 
         assert_eq!(code_blocks.len(), 3);
-        
+
         // First block: no info string
         assert_eq!(code_blocks[0].0, None);
         assert!(code_blocks[0].1.contains("plain code"));
