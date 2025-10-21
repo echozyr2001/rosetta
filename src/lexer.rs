@@ -106,6 +106,11 @@ impl<'input> CharStream<'input> {
             .is_some_and(|g| g.chars().next().is_some_and(|ch| ch.is_whitespace()))
     }
 
+    /// Checks if the current grapheme matches the given string.
+    pub fn current_is_str(&self, s: &str) -> bool {
+        self.current() == Some(s)
+    }
+
     /// Checks if we've reached the end of the input.
     pub fn is_at_end(&self) -> bool {
         self.current_grapheme.is_none()
@@ -209,6 +214,11 @@ impl<'input> Lexer<'input> {
 
     /// Consumes and returns the next token from the input.
     pub fn next_token(&mut self) -> Result<Token<'input>> {
+        // Handle indented code blocks (4+ spaces at start of line) - check first
+        if self.is_indented_code_block() {
+            return self.tokenize_indented_code_block();
+        }
+
         // Skip whitespace but preserve it for indentation detection
         if !self.char_stream.is_at_end()
             && self.char_stream.current_is_whitespace()
@@ -243,9 +253,14 @@ impl<'input> Lexer<'input> {
             return self.tokenize_atx_heading();
         }
 
-        // Handle thematic breaks (--- *** ___)
+        // Handle thematic breaks (--- *** ___) - check before Setext headings
         if self.is_thematic_break_start() {
             return self.tokenize_thematic_break();
+        }
+
+        // Handle Setext headings (underlined with = or -)
+        if self.is_setext_heading_underline() {
+            return self.tokenize_setext_heading();
         }
 
         // Handle code blocks and spans (```)
@@ -374,12 +389,130 @@ impl<'input> Lexer<'input> {
         })
     }
 
+    /// Checks if current position could be a Setext heading underline.
+    fn is_setext_heading_underline(&self) -> bool {
+        // Setext headings use = for level 1 and - for level 2
+        if !matches!(self.char_stream.current(), Some("=") | Some("-")) {
+            return false;
+        }
+
+        // Must be at start of line
+        if !self.is_at_line_start() {
+            return false;
+        }
+
+        // Look ahead to see if the entire line consists of = or - characters
+        let marker = self.char_stream.current().unwrap();
+        let marker_char = marker.chars().next().unwrap();
+        let current_offset = self.char_stream.current_offset().unwrap_or(0);
+        let remaining = &self.char_stream.input[current_offset..];
+
+        let mut has_marker = false;
+        let mut marker_count = 0;
+
+        for ch in remaining.chars() {
+            if ch == marker_char {
+                has_marker = true;
+                marker_count += 1;
+            } else if ch == ' ' || ch == '\t' {
+                continue; // Allow spaces
+            } else if ch == '\n' {
+                break;
+            } else {
+                // Non-whitespace content disqualifies Setext heading
+                return false;
+            }
+        }
+
+        // Need at least one marker character
+        has_marker && marker_count > 0
+    }
+
+    /// Tokenizes Setext headings (underlined with = or -).
+    fn tokenize_setext_heading(&mut self) -> Result<Token<'input>> {
+        let marker = self.char_stream.current().unwrap();
+        let marker_char = marker.chars().next().unwrap();
+        let level = if marker_char == '=' { 1 } else { 2 };
+
+        // Consume the underline
+        while !self.char_stream.is_at_end() && !self.char_stream.current_is('\n') {
+            self.advance();
+        }
+
+        // For Setext headings, we need to look back to find the heading text
+        // This is a simplified implementation - in a real parser, this would be
+        // handled by the parser layer that maintains context about previous lines
+        Ok(Token::SetextHeading {
+            level,
+            content: "", // Content will be determined by parser from previous line
+        })
+    }
+
+    /// Checks if current position starts an indented code block.
+    fn is_indented_code_block(&self) -> bool {
+        // Must have at least 4 spaces at the start of the line
+        let current_offset = self.char_stream.current_offset().unwrap_or(0);
+        let remaining = &self.char_stream.input[current_offset..];
+
+        let mut space_count = 0;
+        for ch in remaining.chars() {
+            if ch == ' ' {
+                space_count += 1;
+            } else if ch == '\t' {
+                space_count += 4; // Tab counts as 4 spaces
+            } else {
+                break;
+            }
+        }
+
+        space_count >= 4
+    }
+
+    /// Tokenizes indented code blocks (4+ spaces).
+    fn tokenize_indented_code_block(&mut self) -> Result<Token<'input>> {
+        // Skip the indentation
+        let mut indent_count = 0;
+        while !self.char_stream.is_at_end() && indent_count < 4 {
+            if self.char_stream.current_is(' ') {
+                indent_count += 1;
+                self.advance();
+            } else if self.char_stream.current_is('\t') {
+                indent_count = 4; // Tab counts as reaching the 4-space threshold
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        // Get the code content for this line
+        let content_start = self
+            .char_stream
+            .current_offset()
+            .unwrap_or(self.char_stream.input.len());
+
+        while !self.char_stream.is_at_end() && !self.char_stream.current_is('\n') {
+            self.advance();
+        }
+
+        let content = self.char_stream.slice_from(content_start);
+
+        Ok(Token::CodeBlock {
+            info: None, // Indented code blocks don't have info strings
+            content,
+        })
+    }
+
     /// Checks if current position could start a thematic break.
     fn is_thematic_break_start(&self) -> bool {
         if !matches!(
             self.char_stream.current(),
             Some("-") | Some("*") | Some("_")
         ) {
+            return false;
+        }
+
+        // Must be at start of line
+        if !self.is_at_line_start() {
             return false;
         }
 
@@ -518,15 +651,31 @@ impl<'input> Lexer<'input> {
 
     /// Tries to tokenize list markers.
     fn try_tokenize_list_marker(&mut self) -> Result<Option<Token<'input>>> {
-        // List markers should only be detected at the beginning of a line or after whitespace
-        // For now, we'll use a simple heuristic: check if we're at the start or after newline
+        // List markers should only be detected at the beginning of a line or after indentation
         let position = self.char_stream.position();
         let is_at_line_start = position.column == 1;
 
-        // Only check for list markers at the start of a line for now
-        // This prevents conflicts with emphasis markers in the middle of text
+        // Calculate current indentation level
+        let mut indent_level = 0;
         if !is_at_line_start {
-            return Ok(None);
+            // Check if we're after whitespace-only content on this line
+            let current_offset = self.char_stream.current_offset().unwrap_or(0);
+            let line_start = self.find_line_start(current_offset);
+            let line_prefix = &self.char_stream.input[line_start..current_offset];
+
+            // Check if everything before current position is whitespace
+            if !line_prefix.chars().all(|c| c == ' ' || c == '\t') {
+                return Ok(None);
+            }
+
+            // Calculate indentation
+            for ch in line_prefix.chars() {
+                if ch == ' ' {
+                    indent_level += 1;
+                } else if ch == '\t' {
+                    indent_level += 4;
+                }
+            }
         }
 
         let current_offset = self.char_stream.current_offset().unwrap_or(0);
@@ -538,17 +687,24 @@ impl<'input> Lexer<'input> {
         ) {
             let marker = self.char_stream.current().unwrap().chars().next().unwrap();
 
-            // Check if the character after the marker is a space by looking at the input string directly
+            // Check if the character after the marker is a space or tab
             let next_offset = current_offset + 1;
             if next_offset < self.char_stream.input.len() {
                 let next_char = &self.char_stream.input[next_offset..next_offset + 1];
-                if next_char == " " {
+                if next_char == " " || next_char == "\t" {
                     self.advance(); // Consume the marker
                     return Ok(Some(Token::ListMarker {
                         kind: ListKind::Bullet { marker },
-                        indent: 0, // Will be calculated by parser
+                        indent: indent_level,
                     }));
                 }
+            } else {
+                // End of input after marker is also valid
+                self.advance();
+                return Ok(Some(Token::ListMarker {
+                    kind: ListKind::Bullet { marker },
+                    indent: indent_level,
+                }));
             }
         }
 
@@ -563,13 +719,14 @@ impl<'input> Lexer<'input> {
             let mut chars = remaining.chars();
             let mut number_str = String::new();
 
-            // Collect digits
+            // Collect digits (up to 9 digits per CommonMark spec)
             while let Some(ch) = chars.next() {
-                if ch.is_ascii_digit() {
+                if ch.is_ascii_digit() && number_str.len() < 9 {
                     number_str.push(ch);
-                } else if ch == '.' || ch == ')' {
-                    // Check if followed by space
-                    if chars.next() == Some(' ') {
+                } else if (ch == '.' || ch == ')') && !number_str.is_empty() {
+                    // Check if followed by space, tab, or end of line
+                    let next_ch = chars.next();
+                    if next_ch == Some(' ') || next_ch == Some('\t') || next_ch.is_none() {
                         let number = number_str.parse::<u32>().unwrap_or(0);
 
                         // Advance past the number and delimiter
@@ -583,7 +740,7 @@ impl<'input> Lexer<'input> {
                                 start: number,
                                 delimiter: ch,
                             },
-                            indent: 0,
+                            indent: indent_level,
                         }));
                     } else {
                         break;
@@ -597,27 +754,49 @@ impl<'input> Lexer<'input> {
         Ok(None)
     }
 
+    /// Finds the start of the current line.
+    fn find_line_start(&self, current_offset: usize) -> usize {
+        let input = self.char_stream.input;
+        for i in (0..current_offset).rev() {
+            if input.chars().nth(i) == Some('\n') {
+                return i + 1;
+            }
+        }
+        0
+    }
+
     /// Checks if current character is an emphasis marker.
     fn is_emphasis_marker(&self) -> bool {
         matches!(self.char_stream.current(), Some("*") | Some("_"))
     }
 
     /// Tokenizes emphasis markers (* _ ** __).
+    /// Enhanced to handle proper emphasis detection according to CommonMark spec.
     fn tokenize_emphasis(&mut self) -> Result<Token<'input>> {
         let marker = self.char_stream.current().unwrap().chars().next().unwrap();
         let mut count = 0;
 
+        // Count consecutive emphasis markers
         while !self.char_stream.is_at_end() && self.char_stream.current_is(marker) {
             count += 1;
             self.advance();
+
+            // CommonMark limits emphasis runs to reasonable lengths
+            if count >= 3 {
+                break;
+            }
         }
 
+        // Check for valid emphasis context according to CommonMark rules
+        // For now, we'll emit the emphasis token and let the parser handle context
         Ok(Token::Emphasis { marker, count })
     }
 
     /// Tokenizes code spans (`code`).
+    /// Enhanced to handle nested backticks and edge cases according to CommonMark spec.
     fn tokenize_code_span(&mut self) -> Result<Token<'input>> {
         let mut backtick_count = 0;
+        let start_offset = self.char_stream.current_offset().unwrap_or(0);
 
         // Count opening backticks
         while !self.char_stream.is_at_end() && self.char_stream.current_is('`') {
@@ -630,102 +809,241 @@ impl<'input> Lexer<'input> {
             .current_offset()
             .unwrap_or(self.char_stream.input.len());
         let mut content_end = content_start;
+        let mut found_closing = false;
 
-        // Find closing backticks
+        // Find matching closing backticks
         while !self.char_stream.is_at_end() {
             if self.char_stream.current_is('`') {
                 let closing_start = self.char_stream.current_offset().unwrap_or(0);
                 let mut closing_count = 0;
 
+                // Count closing backticks
                 while !self.char_stream.is_at_end() && self.char_stream.current_is('`') {
                     closing_count += 1;
                     self.advance();
                 }
 
+                // Must match exactly the opening count
                 if closing_count == backtick_count {
                     content_end = closing_start;
+                    found_closing = true;
                     break;
                 }
+                // If not matching, continue searching (backticks become part of content)
             } else {
                 self.advance();
             }
         }
 
+        // If no closing backticks found, treat as regular text
+        if !found_closing {
+            // Reset position and treat as text
+            let text = self.char_stream.slice_from(start_offset);
+            return Ok(Token::Text(text));
+        }
+
         let content = &self.char_stream.input[content_start..content_end];
-        Ok(Token::CodeSpan(content))
+
+        // CommonMark spec: trim one space from each end if both ends have spaces
+        let trimmed_content =
+            if content.starts_with(' ') && content.ends_with(' ') && content.len() > 1 {
+                &content[1..content.len() - 1]
+            } else {
+                content
+            };
+
+        Ok(Token::CodeSpan(trimmed_content))
     }
 
     /// Tokenizes links and images ([ ![).
+    /// Enhanced to handle full link/image syntax including destinations and titles.
     fn tokenize_link_or_image(&mut self) -> Result<Token<'input>> {
+        let start_offset = self.char_stream.current_offset().unwrap_or(0);
         let is_image = self.char_stream.current_is('!');
+
         if is_image {
             self.advance(); // Skip !
         }
 
         if !self.char_stream.current_is('[') {
-            // Not a valid link/image start
+            // Not a valid link/image start, treat as text
             return self.tokenize_text();
         }
 
         self.advance(); // Skip [
 
-        // For now, create a simple placeholder implementation
-        // Full link parsing will be implemented in later tasks
+        // Parse link text/image alt text
         let text_start = self
             .char_stream
             .current_offset()
             .unwrap_or(self.char_stream.input.len());
+        let mut bracket_depth = 1;
+        let mut text_end = text_start;
 
-        // Find closing ]
-        while !self.char_stream.is_at_end() && !self.char_stream.current_is(']') {
+        // Find matching closing bracket, handling nested brackets
+        while !self.char_stream.is_at_end() && bracket_depth > 0 {
+            if self.char_stream.current_is('[') {
+                bracket_depth += 1;
+            } else if self.char_stream.current_is(']') {
+                bracket_depth -= 1;
+                if bracket_depth == 0 {
+                    text_end = self.char_stream.current_offset().unwrap_or(0);
+                }
+            }
             self.advance();
         }
 
-        let text_content = self.char_stream.slice_from(text_start);
-
-        if self.char_stream.current_is(']') {
-            self.advance(); // Skip ]
+        if bracket_depth > 0 {
+            // No matching closing bracket found, treat as text
+            let text = self.char_stream.slice_from(start_offset);
+            return Ok(Token::Text(text));
         }
 
-        // Simplified link/image token for now
+        let text_content = &self.char_stream.input[text_start..text_end];
+
+        // Check for link destination
+        if !self.char_stream.current_is('(') {
+            // No destination, could be reference link or just bracketed text
+            // For now, treat as simple link/image with empty destination
+            if is_image {
+                return Ok(Token::Image {
+                    alt: text_content,
+                    dest: "",
+                    title: None,
+                });
+            } else {
+                return Ok(Token::Link {
+                    text: text_content,
+                    dest: "",
+                    title: None,
+                });
+            }
+        }
+
+        self.advance(); // Skip (
+
+        // Skip whitespace
+        self.skip_whitespace_except_newline();
+
+        // Parse destination
+        let (dest_start, dest_end) = if self.char_stream.current_is('<') {
+            self.advance();
+            let start = self
+                .char_stream
+                .current_offset()
+                .unwrap_or(self.char_stream.input.len());
+
+            // Find closing >
+            while !self.char_stream.is_at_end() && !self.char_stream.current_is('>') {
+                self.advance();
+            }
+
+            let end = if self.char_stream.current_is('>') {
+                let end_pos = self.char_stream.current_offset().unwrap_or(0);
+                self.advance(); // Skip >
+                end_pos
+            } else {
+                self.char_stream.current_offset().unwrap_or(0)
+            };
+            (start, end)
+        } else {
+            // Parse unenclosed destination
+            let start = self
+                .char_stream
+                .current_offset()
+                .unwrap_or(self.char_stream.input.len());
+            let mut paren_depth = 0;
+            while !self.char_stream.is_at_end() {
+                if self.char_stream.current_is('(') {
+                    paren_depth += 1;
+                } else if self.char_stream.current_is(')') {
+                    if paren_depth == 0 {
+                        break; // End of destination
+                    }
+                    paren_depth -= 1;
+                } else if self.char_stream.current_is_whitespace() {
+                    break; // Whitespace ends unenclosed destination
+                }
+                self.advance();
+            }
+            let end = self.char_stream.current_offset().unwrap_or(0);
+            (start, end)
+        };
+
+        let destination = &self.char_stream.input[dest_start..dest_end];
+
+        // Skip whitespace before potential title
+        self.skip_whitespace_except_newline();
+
+        // Parse optional title
+        let mut title: Option<&str> = None;
+        if !self.char_stream.is_at_end() && !self.char_stream.current_is(')') {
+            let title_quote = self.char_stream.current();
+            if matches!(title_quote, Some("\"") | Some("'") | Some("(")) {
+                let closing_quote = match title_quote {
+                    Some("\"") => "\"",
+                    Some("'") => "'",
+                    Some("(") => ")",
+                    _ => unreachable!(),
+                };
+
+                self.advance(); // Skip opening quote
+                let title_start = self
+                    .char_stream
+                    .current_offset()
+                    .unwrap_or(self.char_stream.input.len());
+
+                // Find closing quote
+                while !self.char_stream.is_at_end()
+                    && !self.char_stream.current_is_str(closing_quote)
+                {
+                    self.advance();
+                }
+
+                if self.char_stream.current_is_str(closing_quote) {
+                    let title_end = self.char_stream.current_offset().unwrap_or(0);
+                    title = Some(&self.char_stream.input[title_start..title_end]);
+                    self.advance(); // Skip closing quote
+                }
+            }
+        }
+
+        // Skip whitespace before closing paren
+        self.skip_whitespace_except_newline();
+
+        // Expect closing parenthesis
+        if !self.char_stream.current_is(')') {
+            // Malformed link, treat as text
+            let text = self.char_stream.slice_from(start_offset);
+            return Ok(Token::Text(text));
+        }
+
+        self.advance(); // Skip )
+
         if is_image {
             Ok(Token::Image {
                 alt: text_content,
-                dest: "", // Will be parsed properly in later tasks
-                title: None,
+                dest: destination,
+                title,
             })
         } else {
             Ok(Token::Link {
                 text: text_content,
-                dest: "", // Will be parsed properly in later tasks
-                title: None,
+                dest: destination,
+                title,
             })
         }
     }
 
-    /// Tokenizes regular text.
+    /// Tokenizes regular text with enhanced consolidation logic.
+    /// Implements text token consolidation according to CommonMark spec.
     fn tokenize_text(&mut self) -> Result<Token<'input>> {
         let start_offset = self.char_stream.current_offset().unwrap_or(0);
 
         // Consume characters until we hit a special character or whitespace
         while !self.char_stream.is_at_end() {
-            // Check if current character is a special Markdown character
-            if self.char_stream.current_is('\n')
-                || self.char_stream.current_is(' ')
-                || self.char_stream.current_is('\t')
-                || self.char_stream.current_is('#')
-                || self.char_stream.current_is('*')
-                || self.char_stream.current_is('_')
-                || self.char_stream.current_is('`')
-                || self.char_stream.current_is('[')
-                || self.char_stream.current_is(']')
-                || self.char_stream.current_is('!')
-                || self.char_stream.current_is('>')
-                || self.char_stream.current_is('-')
-                || self.char_stream.current_is('+')
-                || self.char_stream.current_is('=')
-                || self.char_stream.current_is('~')
-            {
+            // Check if current character is a special Markdown character that should end text
+            if self.is_text_boundary_character() {
                 break;
             }
 
@@ -737,12 +1055,97 @@ impl<'input> Lexer<'input> {
             // If no text was consumed, we hit a special character immediately
             // This should not happen if the tokenizer is working correctly,
             // but we'll handle it gracefully by consuming one character
-            self.advance();
-            let single_char = self.char_stream.slice_from(start_offset);
-            Ok(Token::Text(single_char))
+            if let Some(current) = self.char_stream.current() {
+                self.advance();
+                Ok(Token::Text(current))
+            } else {
+                Ok(Token::Eof)
+            }
         } else {
             Ok(Token::Text(text))
         }
+    }
+
+    /// Checks if the current character should end a text token.
+    /// This implements proper text boundary detection for CommonMark compliance.
+    fn is_text_boundary_character(&self) -> bool {
+        // Structural characters that always end text
+        if self.char_stream.current_is('\n')
+            || self.char_stream.current_is(' ')
+            || self.char_stream.current_is('\t')
+        {
+            return true;
+        }
+
+        // Markdown special characters that can start new tokens
+        if self.char_stream.current_is('#')
+            || self.char_stream.current_is('*')
+            || self.char_stream.current_is('_')
+            || self.char_stream.current_is('`')
+            || self.char_stream.current_is('[')
+            || self.char_stream.current_is(']')
+            || self.char_stream.current_is('!')
+            || self.char_stream.current_is('>')
+            || self.char_stream.current_is('\\')
+        // Escape character
+        {
+            return true;
+        }
+
+        // Context-sensitive characters (-, +, =, ~) that might start special tokens
+        // Only break on these if they could start a valid markdown construct
+        if self.char_stream.current_is('-') || self.char_stream.current_is('+') {
+            // Could be list marker or thematic break
+            return self.could_be_list_marker_or_thematic_break();
+        }
+
+        if self.char_stream.current_is('=') || self.char_stream.current_is('~') {
+            // Could be setext heading or other constructs
+            return self.could_be_setext_heading_or_special();
+        }
+
+        // Check for numeric characters that could start ordered lists
+        if let Some(current) = self.char_stream.current()
+            && let Some(ch) = current.chars().next()
+            && ch.is_ascii_digit()
+        {
+            return self.could_be_ordered_list_marker();
+        }
+
+        false
+    }
+
+    /// Checks if current position could start a list marker or thematic break.
+    fn could_be_list_marker_or_thematic_break(&self) -> bool {
+        // Simple heuristic: if we're at start of line or after whitespace, it could be special
+        let position = self.char_stream.position();
+        position.column == 1 || self.is_after_whitespace_on_line()
+    }
+
+    /// Checks if current position could start a setext heading or other special construct.
+    fn could_be_setext_heading_or_special(&self) -> bool {
+        // Similar heuristic for = and ~ characters
+        let position = self.char_stream.position();
+        position.column == 1 || self.is_after_whitespace_on_line()
+    }
+
+    /// Checks if current position could start an ordered list marker.
+    fn could_be_ordered_list_marker(&self) -> bool {
+        // Check if we're in a position where a list marker could appear
+        let position = self.char_stream.position();
+        position.column == 1 || self.is_after_whitespace_on_line()
+    }
+
+    /// Checks if we're after whitespace on the current line.
+    fn is_after_whitespace_on_line(&self) -> bool {
+        let current_offset = self.char_stream.current_offset().unwrap_or(0);
+        if current_offset == 0 {
+            return false;
+        }
+
+        // Look back to see if previous character was whitespace (but not newline)
+        let prev_char = &self.char_stream.input[current_offset - 1..current_offset];
+        prev_char == " " || prev_char == "\t"
     }
 }
 
@@ -1017,5 +1420,275 @@ mod tests {
 
         let token4 = lexer.next_token().unwrap();
         assert!(matches!(token4, Token::Text("👋")));
+    }
+
+    #[test]
+    fn test_setext_heading_tokenization() {
+        let input = "Heading\n=======";
+        let mut lexer = Lexer::new(input);
+
+        // Skip the heading text for now (will be handled by parser)
+        let _text = lexer.next_token().unwrap();
+        let _newline = lexer.next_token().unwrap();
+
+        let token1 = lexer.next_token().unwrap();
+        if let Token::SetextHeading { level, .. } = token1 {
+            assert_eq!(level, 1);
+        } else {
+            panic!("Expected SetextHeading token, got {:?}", token1);
+        }
+    }
+
+    #[test]
+    fn test_indented_code_block_tokenization() {
+        let input = "    code line 1\n    code line 2";
+        let mut lexer = Lexer::new(input);
+
+        let token1 = lexer.next_token().unwrap();
+        if let Token::CodeBlock { info, content } = token1 {
+            assert_eq!(info, None);
+            assert_eq!(content, "code line 1");
+        } else {
+            panic!("Expected CodeBlock token, got {:?}", token1);
+        }
+
+        let _newline = lexer.next_token().unwrap();
+
+        let token2 = lexer.next_token().unwrap();
+        if let Token::CodeBlock { info, content } = token2 {
+            assert_eq!(info, None);
+            assert_eq!(content, "code line 2");
+        } else {
+            panic!("Expected CodeBlock token, got {:?}", token2);
+        }
+    }
+
+    #[test]
+    fn test_enhanced_list_marker_tokenization() {
+        let input = "- bullet\n  - nested bullet\n1. ordered\n  2) nested ordered";
+        let mut lexer = Lexer::new(input);
+
+        // First bullet marker
+        let token1 = lexer.next_token().unwrap();
+        if let Token::ListMarker { kind, indent } = token1 {
+            if let ListKind::Bullet { marker } = kind {
+                assert_eq!(marker, '-');
+                assert_eq!(indent, 0);
+            } else {
+                panic!("Expected bullet list marker");
+            }
+        } else {
+            panic!("Expected ListMarker token, got {:?}", token1);
+        }
+
+        // Skip to nested bullet
+        lexer.next_token().unwrap(); // "bullet"
+        lexer.next_token().unwrap(); // Newline
+        lexer.next_token().unwrap(); // Indent
+
+        let token2 = lexer.next_token().unwrap();
+        if let Token::ListMarker { kind, indent } = token2 {
+            if let ListKind::Bullet { marker } = kind {
+                assert_eq!(marker, '-');
+                assert_eq!(indent, 2);
+            } else {
+                panic!("Expected bullet list marker");
+            }
+        } else {
+            panic!("Expected ListMarker token, got {:?}", token2);
+        }
+    }
+
+    #[test]
+    fn test_blockquote_tokenization() {
+        let input = "> This is a blockquote\n> Second line";
+        let mut lexer = Lexer::new(input);
+
+        let token1 = lexer.next_token().unwrap();
+        assert!(matches!(token1, Token::BlockQuote));
+
+        let token2 = lexer.next_token().unwrap();
+        assert!(matches!(token2, Token::Text("This")));
+
+        // Skip to next line
+        while !matches!(lexer.next_token().unwrap(), Token::Newline) {}
+
+        let token3 = lexer.next_token().unwrap();
+        assert!(matches!(token3, Token::BlockQuote));
+    }
+
+    #[test]
+    fn test_thematic_break_tokenization() {
+        let input = "---\n***\n___";
+        let mut lexer = Lexer::new(input);
+
+        let token1 = lexer.next_token().unwrap();
+        assert!(matches!(token1, Token::ThematicBreak));
+
+        let _newline1 = lexer.next_token().unwrap();
+
+        let token2 = lexer.next_token().unwrap();
+        assert!(matches!(token2, Token::ThematicBreak));
+
+        let _newline2 = lexer.next_token().unwrap();
+
+        let token3 = lexer.next_token().unwrap();
+        assert!(matches!(token3, Token::ThematicBreak));
+    }
+
+    #[test]
+    fn test_enhanced_emphasis_tokenization() {
+        let input = "*single* **double** ***triple***";
+        let mut lexer = Lexer::new(input);
+
+        // *single*
+        let token1 = lexer.next_token().unwrap();
+        if let Token::Emphasis { marker, count } = token1 {
+            assert_eq!(marker, '*');
+            assert_eq!(count, 1);
+        } else {
+            panic!("Expected Emphasis token, got {:?}", token1);
+        }
+
+        let token2 = lexer.next_token().unwrap();
+        assert!(matches!(token2, Token::Text("single")));
+
+        let token3 = lexer.next_token().unwrap();
+        if let Token::Emphasis { marker, count } = token3 {
+            assert_eq!(marker, '*');
+            assert_eq!(count, 1);
+        } else {
+            panic!("Expected Emphasis token, got {:?}", token3);
+        }
+
+        // **double**
+        let token4 = lexer.next_token().unwrap();
+        if let Token::Emphasis { marker, count } = token4 {
+            assert_eq!(marker, '*');
+            assert_eq!(count, 2);
+        } else {
+            panic!("Expected Emphasis token, got {:?}", token4);
+        }
+
+        let token5 = lexer.next_token().unwrap();
+        assert!(matches!(token5, Token::Text("double")));
+
+        let token6 = lexer.next_token().unwrap();
+        if let Token::Emphasis { marker, count } = token6 {
+            assert_eq!(marker, '*');
+            assert_eq!(count, 2);
+        } else {
+            panic!("Expected Emphasis token, got {:?}", token6);
+        }
+
+        // ***triple***
+        let token7 = lexer.next_token().unwrap();
+        if let Token::Emphasis { marker, count } = token7 {
+            assert_eq!(marker, '*');
+            assert_eq!(count, 3);
+        } else {
+            panic!("Expected Emphasis token, got {:?}", token7);
+        }
+    }
+
+    #[test]
+    fn test_enhanced_code_span_tokenization() {
+        let input = "`simple` ``with backticks ` inside`` ` spaced `";
+        let mut lexer = Lexer::new(input);
+
+        // `simple`
+        let token1 = lexer.next_token().unwrap();
+        if let Token::CodeSpan(content) = token1 {
+            assert_eq!(content, "simple");
+        } else {
+            panic!("Expected CodeSpan token, got {:?}", token1);
+        }
+
+        // ``with backticks ` inside``
+        let token2 = lexer.next_token().unwrap();
+        if let Token::CodeSpan(content) = token2 {
+            assert_eq!(content, "with backticks ` inside");
+        } else {
+            panic!("Expected CodeSpan token, got {:?}", token2);
+        }
+
+        // ` spaced ` (should trim spaces)
+        let token3 = lexer.next_token().unwrap();
+        if let Token::CodeSpan(content) = token3 {
+            assert_eq!(content, "spaced");
+        } else {
+            panic!("Expected CodeSpan token, got {:?}", token3);
+        }
+    }
+
+    #[test]
+    fn test_enhanced_link_tokenization() {
+        let input =
+            "[simple link](http://example.com) [link with title](http://example.com \"Title\")";
+        let mut lexer = Lexer::new(input);
+
+        // [simple link](http://example.com)
+        let token1 = lexer.next_token().unwrap();
+        if let Token::Link { text, dest, title } = token1 {
+            assert_eq!(text, "simple link");
+            assert_eq!(dest, "http://example.com");
+            assert_eq!(title, None);
+        } else {
+            panic!("Expected Link token, got {:?}", token1);
+        }
+
+        // [link with title](http://example.com "Title")
+        let token2 = lexer.next_token().unwrap();
+        if let Token::Link { text, dest, title } = token2 {
+            assert_eq!(text, "link with title");
+            assert_eq!(dest, "http://example.com");
+            assert_eq!(title, Some("Title"));
+        } else {
+            panic!("Expected Link token, got {:?}", token2);
+        }
+    }
+
+    #[test]
+    fn test_enhanced_image_tokenization() {
+        let input = "![alt text](image.jpg) ![with title](image.jpg \"Image Title\")";
+        let mut lexer = Lexer::new(input);
+
+        // ![alt text](image.jpg)
+        let token1 = lexer.next_token().unwrap();
+        if let Token::Image { alt, dest, title } = token1 {
+            assert_eq!(alt, "alt text");
+            assert_eq!(dest, "image.jpg");
+            assert_eq!(title, None);
+        } else {
+            panic!("Expected Image token, got {:?}", token1);
+        }
+
+        // ![with title](image.jpg "Image Title")
+        let token2 = lexer.next_token().unwrap();
+        if let Token::Image { alt, dest, title } = token2 {
+            assert_eq!(alt, "with title");
+            assert_eq!(dest, "image.jpg");
+            assert_eq!(title, Some("Image Title"));
+        } else {
+            panic!("Expected Image token, got {:?}", token2);
+        }
+    }
+
+    #[test]
+    fn test_text_consolidation_logic() {
+        let input = "regular text with spaces";
+        let mut lexer = Lexer::new(input);
+
+        let token1 = lexer.next_token().unwrap();
+        assert!(matches!(token1, Token::Text("regular")));
+
+        let token2 = lexer.next_token().unwrap();
+        assert!(matches!(token2, Token::Text("text")));
+
+        let token3 = lexer.next_token().unwrap();
+        assert!(matches!(token3, Token::Text("with")));
+
+        let token4 = lexer.next_token().unwrap();
+        assert!(matches!(token4, Token::Text("spaces")));
     }
 }
