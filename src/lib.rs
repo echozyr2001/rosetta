@@ -7,7 +7,7 @@ pub mod lexer;
 pub mod parser;
 
 // Re-export key types for public API
-pub use ast::{Node, NodeType};
+pub use ast::{Node, Visitable, Document, Block, Inline, Visitor};
 pub use dom::DomNode;
 pub use error::{MarkdownError, Result};
 pub use lexer::{Lexer, Position, Token};
@@ -60,8 +60,8 @@ pub fn to_html(markdown: &str) -> String {
 ///
 /// # Returns
 ///
-/// Returns the root Node of the AST
-pub fn parse_markdown(markdown: &str) -> Node {
+/// Returns the root Document of the AST
+pub fn parse_markdown(markdown: &str) -> Document {
     parser::parse(markdown)
 }
 
@@ -72,12 +72,12 @@ pub fn parse_markdown(markdown: &str) -> Node {
 ///
 /// # Arguments
 ///
-/// * `ast` - The AST root node to convert
+/// * `ast` - The AST root document to convert
 ///
 /// # Returns
 ///
 /// Returns the root DomNode of the DOM tree
-pub fn ast_to_dom(ast: Node) -> DomNode {
+pub fn ast_to_dom(ast: Document) -> DomNode {
     dom::from_ast(ast)
 }
 
