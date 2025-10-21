@@ -7,7 +7,7 @@ pub mod lexer;
 pub mod parser;
 
 // Re-export key types for public API
-pub use ast::{Node, NodeType};
+pub use ast::{Block, Document, Inline, Node, Visitable, Visitor};
 pub use dom::DomNode;
 pub use error::{MarkdownError, Result};
 pub use lexer::{Lexer, Position, Token};
@@ -40,7 +40,10 @@ pub use lexer::{Lexer, Position, Token};
 /// ```
 pub fn to_html(markdown: &str) -> String {
     // 1. Parsing (includes lexical analysis internally)
-    let root = parser::parse(markdown);
+    let root = parser::parse(markdown).unwrap_or_else(|_| ast::Document {
+        blocks: Vec::new(),
+        source_map: ast::SourceMap::new(),
+    });
 
     // 2. AST to DOM conversion (Intermediate Representation)
     let dom = dom::from_ast(root);
@@ -60,9 +63,12 @@ pub fn to_html(markdown: &str) -> String {
 ///
 /// # Returns
 ///
-/// Returns the root Node of the AST
-pub fn parse_markdown(markdown: &str) -> Node {
-    parser::parse(markdown)
+/// Returns the root Document of the AST
+pub fn parse_markdown(markdown: &str) -> Document {
+    parser::parse(markdown).unwrap_or_else(|_| ast::Document {
+        blocks: Vec::new(),
+        source_map: ast::SourceMap::new(),
+    })
 }
 
 /// Convert an AST to a DOM representation.
@@ -72,12 +78,12 @@ pub fn parse_markdown(markdown: &str) -> Node {
 ///
 /// # Arguments
 ///
-/// * `ast` - The AST root node to convert
+/// * `ast` - The AST root document to convert
 ///
 /// # Returns
 ///
 /// Returns the root DomNode of the DOM tree
-pub fn ast_to_dom(ast: Node) -> DomNode {
+pub fn ast_to_dom(ast: Document) -> DomNode {
     dom::from_ast(ast)
 }
 

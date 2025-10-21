@@ -103,6 +103,34 @@ impl MarkdownError {
     }
 }
 
+impl Clone for MarkdownError {
+    fn clone(&self) -> Self {
+        match self {
+            MarkdownError::Lex { position, message } => MarkdownError::Lex {
+                position: *position,
+                message: message.clone(),
+            },
+            MarkdownError::Parse { position, message } => MarkdownError::Parse {
+                position: *position,
+                message: message.clone(),
+            },
+            MarkdownError::Transform { message } => MarkdownError::Transform {
+                message: message.clone(),
+            },
+            MarkdownError::Generation { message } => MarkdownError::Generation {
+                message: message.clone(),
+            },
+            MarkdownError::Io { source } => MarkdownError::Io {
+                source: std::io::Error::new(source.kind(), source.to_string()),
+            },
+            MarkdownError::Utf8 { source } => MarkdownError::Utf8 { source: *source },
+            MarkdownError::FromUtf8 { source } => MarkdownError::FromUtf8 {
+                source: source.clone(),
+            },
+        }
+    }
+}
+
 /// Error severity levels for different types of issues.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorSeverity {

@@ -30,7 +30,7 @@ impl DomNode {
 /// corresponding DOM representation.
 ///
 /// For now, it returns a fixed, hardcoded DOM for demonstration purposes.
-pub fn from_ast(_ast_root: ast::Node) -> DomNode {
+pub fn from_ast(_ast_root: ast::Document) -> DomNode {
     // Placeholder: A real implementation will convert the `_ast_root`.
     // This dummy DOM corresponds to the AST for: `# Hello, World!`
     let mut dom_root = DomNode::new("div"); // A virtual root for the DOM
