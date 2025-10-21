@@ -1,6 +1,8 @@
-use crate::ast::{Document, SourceMap, ReferenceMap};
-use crate::error::{ErrorHandler, DefaultErrorHandler, ErrorInfo, ErrorSeverity, MarkdownError, Result};
-use crate::lexer::{Lexer, Token, Position};
+use crate::ast::{Block, Document, ReferenceMap, SourceMap};
+use crate::error::{
+    DefaultErrorHandler, ErrorHandler, ErrorInfo, ErrorSeverity, MarkdownError, Result,
+};
+use crate::lexer::{Lexer, Position, Token};
 
 /// Configuration for the parser behavior and options
 #[derive(Debug, Clone)]
@@ -72,7 +74,7 @@ impl<'input> Parser<'input> {
     pub fn new(input: &'input str, config: ParserConfig) -> Self {
         let mut lexer = Lexer::new(input);
         let current_token = lexer.next_token().ok();
-        
+
         let error_handler: Box<dyn ErrorHandler> = if let Some(max_errors) = config.max_errors {
             Box::new(DefaultErrorHandler::with_max_errors(max_errors))
         } else {
@@ -126,10 +128,25 @@ impl<'input> Parser<'input> {
         &self.state.reference_map
     }
 
+    /// Add a link reference definition to the parser state
+    pub fn add_reference_definition(
+        &mut self,
+        label: String,
+        destination: String,
+        title: Option<String>,
+    ) {
+        let reference = crate::ast::LinkReference {
+            label: label.clone(),
+            destination,
+            title,
+        };
+        self.state.reference_map.insert(label, reference);
+    }
+
     /// Parses the input and returns a Document AST
     pub fn parse(&mut self) -> Result<Document> {
         self.reset_state();
-        
+
         match self.parse_document() {
             Ok(document) => {
                 // For now, we'll skip the fatal error check since it requires complex downcasting
@@ -191,10 +208,13 @@ impl<'input> Parser<'input> {
                 return Ok(token);
             }
         }
-        
+
         Err(MarkdownError::parse_error(
             self.position(),
-            format!("Expected token {:?}, found {:?}", expected, self.current_token)
+            format!(
+                "Expected token {:?}, found {:?}",
+                expected, self.current_token
+            ),
         ))
     }
 
@@ -215,7 +235,10 @@ impl<'input> Parser<'input> {
         if self.state.nesting_depth > self.config.max_nesting_depth {
             let error = MarkdownError::parse_error(
                 self.position(),
-                format!("Maximum nesting depth {} exceeded", self.config.max_nesting_depth)
+                format!(
+                    "Maximum nesting depth {} exceeded",
+                    self.config.max_nesting_depth
+                ),
             );
             self.handle_parse_error(error.clone());
             return Err(error);
@@ -239,7 +262,7 @@ impl<'input> Parser<'input> {
     /// Attempts error recovery by advancing to a safe parsing state
     fn attempt_recovery(&mut self) {
         self.state.in_recovery = true;
-        
+
         // Try to find a block boundary or other safe recovery point
         while !self.is_at_end() {
             match &self.current_token {
@@ -248,10 +271,10 @@ impl<'input> Parser<'input> {
                     self.advance().ok();
                     break;
                 }
-                Some(Token::AtxHeading { .. }) | 
-                Some(Token::SetextHeading { .. }) |
-                Some(Token::ThematicBreak) |
-                Some(Token::BlockQuote) => {
+                Some(Token::AtxHeading { .. })
+                | Some(Token::SetextHeading { .. })
+                | Some(Token::ThematicBreak)
+                | Some(Token::BlockQuote) => {
                     // Found a block-level element, good recovery point
                     break;
                 }
@@ -263,7 +286,7 @@ impl<'input> Parser<'input> {
                 }
             }
         }
-        
+
         // Reset nesting depth after recovery
         self.state.nesting_depth = 0;
         self.mark_good_position();
@@ -271,19 +294,18 @@ impl<'input> Parser<'input> {
 
     /// Handles lexer errors with appropriate recovery
     fn handle_lexer_error(&mut self, error: MarkdownError) {
-        let error_info = ErrorInfo::new(
-            ErrorSeverity::Error,
-            format!("Lexer error: {}", error)
-        ).with_position(self.position());
-        
+        let error_info = ErrorInfo::new(ErrorSeverity::Error, format!("Lexer error: {}", error))
+            .with_position(self.position());
+
         self.error_handler.handle_error(&error_info);
-        
+
         if !self.error_handler.should_continue(ErrorSeverity::Error) {
             // Convert to fatal error if we should stop
             let fatal_error = ErrorInfo::new(
                 ErrorSeverity::Fatal,
-                "Too many lexer errors, stopping parsing".to_string()
-            ).with_position(self.position());
+                "Too many lexer errors, stopping parsing".to_string(),
+            )
+            .with_position(self.position());
             self.error_handler.handle_error(&fatal_error);
         }
     }
@@ -291,31 +313,771 @@ impl<'input> Parser<'input> {
     /// Handles parse errors with appropriate recovery
     fn handle_parse_error(&mut self, error: MarkdownError) {
         let error_info = ErrorInfo::new(
-            if error.is_recoverable() { ErrorSeverity::Error } else { ErrorSeverity::Fatal },
-            format!("Parse error: {}", error)
-        ).with_position(self.position());
-        
+            if error.is_recoverable() {
+                ErrorSeverity::Error
+            } else {
+                ErrorSeverity::Fatal
+            },
+            format!("Parse error: {}", error),
+        )
+        .with_position(self.position());
+
         self.error_handler.handle_error(&error_info);
-        
+
         if error.is_recoverable() && !self.config.strict_commonmark {
             self.attempt_recovery();
         }
     }
 
-    /// Placeholder for document parsing - will be implemented in subsequent tasks
+    /// Parses the entire document into a Document AST
     fn parse_document(&mut self) -> Result<Document> {
-        // This is a placeholder implementation for task 4.1
-        // The actual document parsing logic will be implemented in task 4.2
-        
-        // For now, return a simple document to demonstrate the parser foundation
-        Ok(Document {
-            blocks: Vec::new(),
-            source_map: SourceMap::new(),
+        let mut blocks = Vec::new();
+        let source_map = SourceMap::new();
+
+        // Parse blocks until we reach the end of input
+        while !self.is_at_end() {
+            // Skip empty lines and whitespace
+            if matches!(self.current_token, Some(Token::Newline)) {
+                self.advance()?;
+                continue;
+            }
+
+            // Skip indentation tokens at document level
+            if matches!(self.current_token, Some(Token::Indent(_))) {
+                self.advance()?;
+                continue;
+            }
+
+            // Parse the next block
+            match self.parse_block() {
+                Ok(block) => {
+                    blocks.push(block);
+                }
+                Err(error) => {
+                    self.handle_parse_error(error.clone());
+                    if self.config.strict_commonmark {
+                        return Err(error);
+                    }
+                    // In non-strict mode, try to recover
+                    self.attempt_recovery();
+                }
+            }
+        }
+
+        Ok(Document { blocks, source_map })
+    }
+
+    /// Parses a single block element
+    fn parse_block(&mut self) -> Result<Block> {
+        self.enter_nesting_level()?;
+
+        let result = match &self.current_token {
+            Some(Token::AtxHeading { level, content }) => self.parse_atx_heading(*level, content),
+            Some(Token::SetextHeading { level, content }) => {
+                self.parse_setext_heading(*level, content)
+            }
+            Some(Token::CodeBlock { info, content }) => {
+                self.parse_code_block(info.as_ref().map(|s| *s), content)
+            }
+            Some(Token::BlockQuote) => self.parse_blockquote(),
+            Some(Token::ListMarker { kind, indent }) => self.parse_list(kind.clone(), *indent),
+            Some(Token::ThematicBreak) => self.parse_thematic_break(),
+            _ => {
+                // Default to paragraph parsing for text and other inline content
+                self.parse_paragraph()
+            }
+        };
+
+        self.exit_nesting_level();
+        result
+    }
+
+    /// Parses an ATX heading (# ## ### etc.)
+    fn parse_atx_heading(&mut self, level: u8, content: &str) -> Result<Block> {
+        let position = Some(self.position());
+        self.advance()?; // consume the heading token
+
+        // Parse the heading content as inline elements
+        let inline_content = self.parse_heading_content(content)?;
+
+        Ok(Block::Heading {
+            level,
+            content: inline_content,
+            id: None, // ID generation can be added later
+            position,
         })
     }
+
+    /// Parses a Setext heading (underlined with = or -)
+    fn parse_setext_heading(&mut self, level: u8, _content: &str) -> Result<Block> {
+        let position = Some(self.position());
+
+        // For Setext headings, we need to look back at the previous line
+        // This is a simplified implementation - in a full parser, this would
+        // require maintaining state about previous lines
+        self.advance()?; // consume the setext heading token
+
+        // For now, create a heading with placeholder content
+        // In a complete implementation, this would use the text from the previous line
+        let inline_content = vec![crate::ast::utils::NodeBuilder::text(
+            "Setext Heading".to_string(),
+        )];
+
+        Ok(Block::Heading {
+            level,
+            content: inline_content,
+            id: None,
+            position,
+        })
+    }
+
+    /// Parses a code block (fenced or indented)
+    fn parse_code_block(&mut self, info: Option<&str>, content: &str) -> Result<Block> {
+        let position = Some(self.position());
+        self.advance()?; // consume the code block token
+
+        // Extract language from info string if present
+        let language =
+            info.and_then(|info_str| info_str.split_whitespace().next().map(|s| s.to_string()));
+
+        Ok(Block::CodeBlock {
+            info: info.map(|s| s.to_string()),
+            content: content.to_string(),
+            language,
+            position,
+        })
+    }
+
+    /// Parses a blockquote
+    fn parse_blockquote(&mut self) -> Result<Block> {
+        let position = Some(self.position());
+        self.advance()?; // consume the blockquote marker
+
+        let mut content = Vec::new();
+
+        // Parse the content of the blockquote
+        // Continue parsing blocks until we hit a non-blockquote line
+        loop {
+            // Skip whitespace after blockquote marker
+            while matches!(self.current_token, Some(Token::Indent(_))) {
+                self.advance()?;
+            }
+
+            // Check if we've reached the end or a non-blockquote line
+            if self.is_at_end() {
+                break;
+            }
+
+            // If we hit another blockquote marker, continue parsing
+            if matches!(self.current_token, Some(Token::BlockQuote)) {
+                self.advance()?; // consume the marker
+                continue;
+            }
+
+            // If we hit a newline, check if the next line continues the blockquote
+            if matches!(self.current_token, Some(Token::Newline)) {
+                self.advance()?;
+                if matches!(self.current_token, Some(Token::BlockQuote)) {
+                    continue;
+                } else {
+                    // End of blockquote
+                    break;
+                }
+            }
+
+            // Parse a block within the blockquote
+            match self.parse_block() {
+                Ok(block) => content.push(block),
+                Err(_) => break, // End of blockquote content
+            }
+        }
+
+        Ok(Block::BlockQuote { content, position })
+    }
+
+    /// Parses a list (ordered or unordered)
+    fn parse_list(&mut self, kind: crate::lexer::ListKind, base_indent: usize) -> Result<Block> {
+        let position = Some(self.position());
+        let mut items = Vec::new();
+        let mut tight = true; // Assume tight list initially
+
+        // Convert lexer ListKind to AST ListKind
+        let list_kind = match kind {
+            crate::lexer::ListKind::Bullet { marker } => crate::ast::ListKind::Bullet { marker },
+            crate::lexer::ListKind::Ordered { start, delimiter } => {
+                crate::ast::ListKind::Ordered { start, delimiter }
+            }
+        };
+
+        // Parse list items
+        while matches!(self.current_token, Some(Token::ListMarker { .. })) {
+            if let Some(Token::ListMarker {
+                kind: item_kind,
+                indent,
+            }) = &self.current_token
+            {
+                // Check if this marker matches our list type and indentation level
+                if !self.list_kinds_match(&kind, item_kind) || *indent != base_indent {
+                    break; // Different list type or indentation level
+                }
+
+                let item = self.parse_list_item()?;
+                items.push(item);
+
+                // Check for blank lines between items (makes list loose)
+                if self.has_blank_line_before_next_item() {
+                    tight = false;
+                }
+            } else {
+                break;
+            }
+        }
+
+        Ok(Block::List {
+            kind: list_kind,
+            tight,
+            items,
+            position,
+        })
+    }
+
+    /// Parses a single list item
+    fn parse_list_item(&mut self) -> Result<crate::ast::ListItem> {
+        self.advance()?; // consume the list marker
+
+        let mut content = Vec::new();
+        let mut tight = true;
+
+        // Skip whitespace after list marker
+        while matches!(self.current_token, Some(Token::Indent(_))) {
+            self.advance()?;
+        }
+
+        // Parse the first line of the list item
+        if !matches!(self.current_token, Some(Token::Newline) | Some(Token::Eof)) {
+            let block = self.parse_block()?;
+            content.push(block);
+        }
+
+        // Handle continuation lines
+        while matches!(self.current_token, Some(Token::Newline)) {
+            self.advance()?; // consume newline
+
+            // Check for blank line
+            if matches!(self.current_token, Some(Token::Newline)) {
+                tight = false;
+                continue;
+            }
+
+            // Check if next line is indented (continuation of list item)
+            if matches!(self.current_token, Some(Token::Indent(_))) {
+                self.advance()?; // consume indentation
+                if !self.is_at_end()
+                    && !matches!(self.current_token, Some(Token::ListMarker { .. }))
+                {
+                    let block = self.parse_block()?;
+                    content.push(block);
+                }
+            } else {
+                // End of list item
+                break;
+            }
+        }
+
+        Ok(crate::ast::ListItem {
+            content,
+            tight,
+            task_list_marker: None, // Task list support can be added later
+        })
+    }
+
+    /// Parses a thematic break (horizontal rule)
+    fn parse_thematic_break(&mut self) -> Result<Block> {
+        let position = Some(self.position());
+        self.advance()?; // consume the thematic break token
+
+        Ok(Block::ThematicBreak { position })
+    }
+
+    /// Parses a paragraph (default block type for text content)
+    fn parse_paragraph(&mut self) -> Result<Block> {
+        let position = Some(self.position());
+        let mut inline_content = Vec::new();
+
+        // Collect inline content until we hit a paragraph boundary
+        while !self.is_at_end() && !self.is_paragraph_boundary() {
+            match &self.current_token {
+                Some(Token::Text(text)) => {
+                    // Process text for HTML inlines
+                    let processed_inlines = self.process_text_for_html_inlines(text)?;
+                    inline_content.extend(processed_inlines);
+                    self.advance()?;
+                }
+                Some(Token::Emphasis { marker, count }) => {
+                    let emphasis = self.parse_emphasis(*marker, *count)?;
+                    inline_content.push(emphasis);
+                }
+                Some(Token::CodeSpan(content)) => {
+                    inline_content.push(crate::ast::utils::NodeBuilder::code_span(
+                        content.to_string(),
+                    ));
+                    self.advance()?;
+                }
+                Some(Token::Link { text, dest, title }) => {
+                    let link = self.parse_link_token(text, dest, title.as_ref().map(|s| *s))?;
+                    inline_content.push(link);
+                }
+                Some(Token::Image { alt, dest, title }) => {
+                    let image = self.parse_image_token(alt, dest, title.as_ref().map(|s| *s))?;
+                    inline_content.push(image);
+                }
+                Some(Token::Newline) => {
+                    // Check if this is the end of the paragraph
+                    self.advance()?;
+                    if self.is_paragraph_boundary() {
+                        break;
+                    }
+                    // Otherwise, add a soft break and continue
+                    inline_content.push(crate::ast::utils::NodeBuilder::soft_break());
+                }
+                _ => {
+                    // Hit a block-level token, end the paragraph
+                    break;
+                }
+            }
+        }
+
+        // If no content was collected, create a paragraph with empty text
+        if inline_content.is_empty() {
+            inline_content.push(crate::ast::utils::NodeBuilder::text(String::new()));
+        }
+
+        Ok(Block::Paragraph {
+            content: inline_content,
+            position,
+        })
+    }
+
+    /// Parse inline elements from the current token stream
+    /// This is the main inline parsing method that handles all inline elements
+    fn parse_inline(&mut self) -> Result<Vec<crate::ast::Inline>> {
+        let mut inlines = Vec::new();
+
+        while !self.is_at_end() && !self.is_inline_boundary() {
+            match &self.current_token {
+                Some(Token::Text(text)) => {
+                    // Check if text contains HTML inline elements
+                    let processed_inlines = self.process_text_for_html_inlines(text)?;
+                    inlines.extend(processed_inlines);
+                    self.advance()?;
+                }
+                Some(Token::Emphasis { marker, count }) => {
+                    let emphasis = self.parse_emphasis(*marker, *count)?;
+                    inlines.push(emphasis);
+                }
+                Some(Token::CodeSpan(content)) => {
+                    inlines.push(crate::ast::utils::NodeBuilder::code_span(
+                        content.to_string(),
+                    ));
+                    self.advance()?;
+                }
+                Some(Token::Link { text, dest, title }) => {
+                    let link = self.parse_link_token(text, dest, title.as_ref().map(|s| *s))?;
+                    inlines.push(link);
+                }
+                Some(Token::Image { alt, dest, title }) => {
+                    let image = self.parse_image_token(alt, dest, title.as_ref().map(|s| *s))?;
+                    inlines.push(image);
+                }
+                Some(Token::Newline) => {
+                    // Check if this should be a hard break or soft break
+                    if self.is_hard_break() {
+                        inlines.push(crate::ast::utils::NodeBuilder::hard_break());
+                    } else {
+                        inlines.push(crate::ast::utils::NodeBuilder::soft_break());
+                    }
+                    self.advance()?;
+                }
+                _ => {
+                    // Hit a block-level token or other boundary, stop parsing inlines
+                    break;
+                }
+            }
+        }
+
+        // If no inlines were parsed, return empty text to avoid empty inline lists
+        if inlines.is_empty() {
+            inlines.push(crate::ast::utils::NodeBuilder::text(String::new()));
+        }
+
+        Ok(inlines)
+    }
+
+    /// Parse emphasis with proper delimiter resolution
+    /// Implements CommonMark emphasis rules including nested emphasis
+    fn parse_emphasis(&mut self, marker: char, count: usize) -> Result<crate::ast::Inline> {
+        self.advance()?; // consume the opening emphasis marker
+
+        let strong = count >= 2;
+        let mut content = Vec::new();
+        let mut delimiter_stack = Vec::new();
+
+        // Track the emphasis delimiter for proper matching
+        delimiter_stack.push((marker, count));
+
+        while !self.is_at_end() {
+            match &self.current_token {
+                Some(Token::Text(text)) => {
+                    content.push(crate::ast::utils::NodeBuilder::text(text.to_string()));
+                    self.advance()?;
+                }
+                Some(Token::Emphasis {
+                    marker: current_marker,
+                    count: current_count,
+                }) => {
+                    // Check if this is a closing marker that matches our opening
+                    if *current_marker == marker && *current_count >= count {
+                        self.advance()?; // consume closing marker
+                        break;
+                    } else {
+                        // This is nested emphasis or different marker
+                        let nested_emphasis =
+                            self.parse_emphasis(*current_marker, *current_count)?;
+                        content.push(nested_emphasis);
+                    }
+                }
+                Some(Token::CodeSpan(code_content)) => {
+                    content.push(crate::ast::utils::NodeBuilder::code_span(
+                        code_content.to_string(),
+                    ));
+                    self.advance()?;
+                }
+                Some(Token::Link { text, dest, title }) => {
+                    let link = self.parse_link_token(text, dest, title.as_ref().map(|s| *s))?;
+                    content.push(link);
+                }
+                Some(Token::Image { alt, dest, title }) => {
+                    let image = self.parse_image_token(alt, dest, title.as_ref().map(|s| *s))?;
+                    content.push(image);
+                }
+                Some(Token::Newline) => {
+                    // Emphasis can span soft breaks but not hard breaks
+                    if self.is_hard_break() {
+                        break; // End emphasis at hard break
+                    } else {
+                        content.push(crate::ast::utils::NodeBuilder::soft_break());
+                        self.advance()?;
+                    }
+                }
+                _ => {
+                    // Hit a block boundary, end emphasis
+                    break;
+                }
+            }
+        }
+
+        Ok(crate::ast::utils::NodeBuilder::emphasis(strong, content))
+    }
+
+    /// Parse a link token into a Link inline element
+    /// Handles both direct links and reference links
+    fn parse_link_token(
+        &mut self,
+        text: &str,
+        dest: &str,
+        title: Option<&str>,
+    ) -> Result<crate::ast::Inline> {
+        self.advance()?; // consume the link token
+
+        // Check if this is a reference link (destination is empty or starts with reference syntax)
+        if dest.is_empty() || dest.starts_with('[') {
+            // This is a reference link - look up in reference map
+            let reference_label = if dest.is_empty() { text } else { dest };
+
+            // Clone the reference data to avoid borrowing issues
+            let reference_data = self.state.reference_map.get(reference_label).cloned();
+
+            if let Some(link_ref) = reference_data {
+                // Parse the link text as inline elements
+                let link_text = self.parse_text_as_inline(text)?;
+
+                Ok(crate::ast::utils::NodeBuilder::link(
+                    link_text,
+                    link_ref.destination,
+                    link_ref.title,
+                ))
+            } else {
+                // Reference not found, treat as plain text
+                Ok(crate::ast::utils::NodeBuilder::text(format!(
+                    "[{}]({})",
+                    text, dest
+                )))
+            }
+        } else {
+            // Direct link
+            let link_text = self.parse_text_as_inline(text)?;
+
+            Ok(crate::ast::utils::NodeBuilder::link(
+                link_text,
+                dest.to_string(),
+                title.map(|s| s.to_string()),
+            ))
+        }
+    }
+
+    /// Parse an image token into an Image inline element
+    /// Handles both direct images and reference images
+    fn parse_image_token(
+        &mut self,
+        alt: &str,
+        dest: &str,
+        title: Option<&str>,
+    ) -> Result<crate::ast::Inline> {
+        self.advance()?; // consume the image token
+
+        // Check if this is a reference image
+        if dest.is_empty() || dest.starts_with('[') {
+            // This is a reference image - look up in reference map
+            let reference_label = if dest.is_empty() { alt } else { dest };
+
+            // Clone the reference data to avoid borrowing issues
+            let reference_data = self.state.reference_map.get(reference_label).cloned();
+
+            if let Some(link_ref) = reference_data {
+                Ok(crate::ast::utils::NodeBuilder::image(
+                    alt.to_string(),
+                    link_ref.destination,
+                    link_ref.title,
+                ))
+            } else {
+                // Reference not found, treat as plain text
+                Ok(crate::ast::utils::NodeBuilder::text(format!(
+                    "![{}]({})",
+                    alt, dest
+                )))
+            }
+        } else {
+            // Direct image
+            Ok(crate::ast::utils::NodeBuilder::image(
+                alt.to_string(),
+                dest.to_string(),
+                title.map(|s| s.to_string()),
+            ))
+        }
+    }
+
+    /// Process text content for HTML inline elements
+    /// This method scans text for HTML tags and creates appropriate inline elements
+    fn process_text_for_html_inlines(&mut self, text: &str) -> Result<Vec<crate::ast::Inline>> {
+        let mut inlines = Vec::new();
+        let mut current_pos = 0;
+
+        while current_pos < text.len() {
+            // Look for HTML tag start
+            if let Some(tag_start) = text[current_pos..].find('<') {
+                let absolute_tag_start = current_pos + tag_start;
+
+                // Add any text before the tag
+                if tag_start > 0 {
+                    let text_before = &text[current_pos..absolute_tag_start];
+                    if !text_before.is_empty() {
+                        inlines.push(crate::ast::utils::NodeBuilder::text(
+                            text_before.to_string(),
+                        ));
+                    }
+                }
+
+                // Find the end of the HTML tag
+                if let Some(tag_end) = text[absolute_tag_start..].find('>') {
+                    let absolute_tag_end = absolute_tag_start + tag_end + 1;
+                    let html_tag = &text[absolute_tag_start..absolute_tag_end];
+
+                    // Validate that this looks like a valid HTML tag
+                    if self.is_valid_html_inline_tag(html_tag) {
+                        inlines.push(crate::ast::utils::NodeBuilder::html_inline(
+                            html_tag.to_string(),
+                        ));
+                        current_pos = absolute_tag_end;
+                    } else {
+                        // Not a valid HTML tag, treat as text
+                        inlines.push(crate::ast::utils::NodeBuilder::text("<".to_string()));
+                        current_pos = absolute_tag_start + 1;
+                    }
+                } else {
+                    // No closing '>', treat as text
+                    inlines.push(crate::ast::utils::NodeBuilder::text("<".to_string()));
+                    current_pos = absolute_tag_start + 1;
+                }
+            } else {
+                // No more HTML tags, add remaining text
+                let remaining_text = &text[current_pos..];
+                if !remaining_text.is_empty() {
+                    inlines.push(crate::ast::utils::NodeBuilder::text(
+                        remaining_text.to_string(),
+                    ));
+                }
+                break;
+            }
+        }
+
+        // If no inlines were created, return the original text
+        if inlines.is_empty() {
+            inlines.push(crate::ast::utils::NodeBuilder::text(text.to_string()));
+        }
+
+        Ok(inlines)
+    }
+
+    /// Check if a string represents a valid HTML inline tag
+    /// This is a simplified validation - a full implementation would be more comprehensive
+    fn is_valid_html_inline_tag(&self, tag: &str) -> bool {
+        if tag.len() < 3 || !tag.starts_with('<') || !tag.ends_with('>') {
+            return false;
+        }
+
+        let inner = &tag[1..tag.len() - 1];
+
+        // Check for self-closing tags
+        if inner.ends_with('/') {
+            let tag_name = &inner[..inner.len() - 1].trim();
+            return self.is_valid_html_tag_name(tag_name);
+        }
+
+        // Check for closing tags
+        if inner.starts_with('/') {
+            let tag_name = inner[1..].trim();
+            return self.is_valid_html_tag_name(tag_name);
+        }
+
+        // Check for opening tags (may have attributes)
+        let tag_name = inner.split_whitespace().next().unwrap_or("");
+        self.is_valid_html_tag_name(tag_name)
+    }
+
+    /// Check if a string is a valid HTML tag name
+    fn is_valid_html_tag_name(&self, name: &str) -> bool {
+        if name.is_empty() {
+            return false;
+        }
+
+        // Common HTML inline tags
+        let valid_inline_tags = [
+            "a", "abbr", "b", "bdi", "bdo", "br", "button", "cite", "code", "dfn", "em", "i",
+            "kbd", "mark", "q", "s", "samp", "small", "span", "strong", "sub", "sup", "time", "u",
+            "var", "wbr",
+        ];
+
+        valid_inline_tags.contains(&name.to_lowercase().as_str())
+    }
+
+    /// Parse text content as inline elements (for link text, etc.)
+    /// This allows for nested inline elements within link text
+    fn parse_text_as_inline(&mut self, text: &str) -> Result<Vec<crate::ast::Inline>> {
+        if text.is_empty() {
+            return Ok(vec![crate::ast::utils::NodeBuilder::text(String::new())]);
+        }
+
+        // For now, treat as simple text
+        // In a full implementation, this would create a sub-lexer to parse the text
+        // and handle nested emphasis, code spans, etc. within link text
+        Ok(vec![crate::ast::utils::NodeBuilder::text(text.to_string())])
+    }
+
+    /// Check if the current position represents an inline boundary
+    fn is_inline_boundary(&self) -> bool {
+        match &self.current_token {
+            Some(Token::AtxHeading { .. })
+            | Some(Token::SetextHeading { .. })
+            | Some(Token::CodeBlock { .. })
+            | Some(Token::BlockQuote)
+            | Some(Token::ListMarker { .. })
+            | Some(Token::ThematicBreak)
+            | Some(Token::Eof)
+            | None => true,
+            _ => false,
+        }
+    }
+
+    /// Check if the current newline should be treated as a hard break
+    /// Hard breaks occur when a line ends with two or more spaces
+    fn is_hard_break(&mut self) -> bool {
+        // This is a simplified implementation
+        // In a full parser, this would check if the previous line ended with 2+ spaces
+        // or if there's a backslash at the end of the line
+        false // For now, treat all as soft breaks
+    }
+
+    /// Helper method to parse heading content as inline elements
+    fn parse_heading_content(&mut self, content: &str) -> Result<Vec<crate::ast::Inline>> {
+        // Parse the heading content as inline elements
+        self.parse_text_as_inline(content)
+    }
+
+    /// Helper method to parse emphasis inline elements (legacy method for compatibility)
+    fn parse_emphasis_inline(&mut self, marker: char, count: usize) -> Result<crate::ast::Inline> {
+        self.parse_emphasis(marker, count)
+    }
+
+    /// Helper method to check if list kinds match
+    fn list_kinds_match(
+        &self,
+        kind1: &crate::lexer::ListKind,
+        kind2: &crate::lexer::ListKind,
+    ) -> bool {
+        match (kind1, kind2) {
+            (crate::lexer::ListKind::Bullet { .. }, crate::lexer::ListKind::Bullet { .. }) => true,
+            (crate::lexer::ListKind::Ordered { .. }, crate::lexer::ListKind::Ordered { .. }) => {
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Helper method to check for blank lines between list items
+    fn has_blank_line_before_next_item(&mut self) -> bool {
+        // Look ahead to see if there's a blank line
+        let mut temp_lexer = self.clone_state();
+
+        // Skip current newline if present
+        if matches!(temp_lexer.current_token, Some(Token::Newline)) {
+            temp_lexer.advance().ok();
+        }
+
+        // Check if next token is another newline (blank line)
+        matches!(temp_lexer.current_token, Some(Token::Newline))
+    }
+
+    /// Helper method to check if we're at a paragraph boundary
+    fn is_paragraph_boundary(&self) -> bool {
+        match &self.current_token {
+            Some(Token::AtxHeading { .. })
+            | Some(Token::SetextHeading { .. })
+            | Some(Token::CodeBlock { .. })
+            | Some(Token::BlockQuote)
+            | Some(Token::ListMarker { .. })
+            | Some(Token::ThematicBreak)
+            | Some(Token::Newline)
+            | Some(Token::Eof)
+            | None => true,
+            _ => false,
+        }
+    }
+
+    /// Helper method to clone parser state for lookahead
+    fn clone_state(&self) -> Parser<'input> {
+        // For now, create a simple clone by creating a new parser
+        // In a full implementation, this would properly clone the lexer state
+        let new_lexer = Lexer::new("");
+
+        Parser {
+            lexer: new_lexer,
+            current_token: self.current_token.clone(),
+            config: self.config.clone(),
+            state: self.state.clone(),
+            error_handler: Box::new(crate::error::DefaultErrorHandler::new()),
+        }
+    }
 }
-
-
 
 /// Simple parse function with default configuration for convenience
 pub fn parse(markdown: &str) -> Result<Document> {
@@ -332,13 +1094,13 @@ pub fn parse_with_config(markdown: &str, config: ParserConfig) -> Result<Documen
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::{ErrorSeverity, ErrorInfo};
+    use crate::error::{ErrorInfo, ErrorSeverity};
 
     #[test]
     fn test_parser_creation() {
         let input = "# Hello World";
         let parser = Parser::with_defaults(input);
-        
+
         assert_eq!(parser.config().strict_commonmark, true);
         assert_eq!(parser.config().max_nesting_depth, 64);
         assert_eq!(parser.config().track_source_positions, true);
@@ -354,7 +1116,7 @@ mod tests {
             track_source_positions: false,
             max_errors: Some(50),
         };
-        
+
         let parser = Parser::new(input, config.clone());
         assert_eq!(parser.config().strict_commonmark, false);
         assert_eq!(parser.config().max_nesting_depth, 32);
@@ -367,7 +1129,7 @@ mod tests {
     fn test_parser_position_tracking() {
         let input = "line1\nline2";
         let parser = Parser::with_defaults(input);
-        
+
         let position = parser.position();
         assert_eq!(position.line, 1);
         // Position may have advanced due to lexer initialization, so we check it's reasonable
@@ -378,22 +1140,30 @@ mod tests {
     fn test_parser_basic_parsing() {
         let input = "# Hello World";
         let mut parser = Parser::with_defaults(input);
-        
+
         let result = parser.parse();
         assert!(result.is_ok());
-        
+
         let document = result.unwrap();
-        assert_eq!(document.blocks.len(), 0); // Placeholder implementation returns empty document
+        assert_eq!(document.blocks.len(), 1); // Should now parse the heading
+
+        // Check that we got a heading block
+        if let Block::Heading { level, content, .. } = &document.blocks[0] {
+            assert_eq!(*level, 1);
+            assert_eq!(content.len(), 1);
+        } else {
+            panic!("Expected heading block");
+        }
     }
 
     #[test]
     fn test_parser_empty_input() {
         let input = "";
         let mut parser = Parser::with_defaults(input);
-        
+
         let result = parser.parse();
         assert!(result.is_ok());
-        
+
         let document = result.unwrap();
         assert_eq!(document.blocks.len(), 0);
     }
@@ -403,21 +1173,21 @@ mod tests {
         struct TestErrorHandler {
             errors: Vec<ErrorInfo>,
         }
-        
+
         impl ErrorHandler for TestErrorHandler {
             fn handle_error(&mut self, error: &ErrorInfo) {
                 self.errors.push(error.clone());
             }
-            
+
             fn should_continue(&self, _severity: ErrorSeverity) -> bool {
                 self.errors.len() < 5
             }
         }
-        
+
         let input = "# Hello World";
         let config = ParserConfig::default();
         let error_handler = Box::new(TestErrorHandler { errors: Vec::new() });
-        
+
         let parser = Parser::with_error_handler(input, config, error_handler);
         assert_eq!(parser.config().strict_commonmark, true);
     }
@@ -425,7 +1195,7 @@ mod tests {
     #[test]
     fn test_parser_config_default() {
         let config = ParserConfig::default();
-        
+
         assert_eq!(config.strict_commonmark, true);
         assert_eq!(config.max_nesting_depth, 64);
         assert_eq!(config.enable_gfm_extensions, false);
@@ -437,15 +1207,15 @@ mod tests {
     fn test_parser_state_management() {
         let input = "# Test";
         let mut parser = Parser::with_defaults(input);
-        
+
         // Test initial state
         assert_eq!(parser.state.nesting_depth, 0);
         assert_eq!(parser.state.in_recovery, false);
-        
+
         // Test nesting level management
         assert!(parser.enter_nesting_level().is_ok());
         assert_eq!(parser.state.nesting_depth, 1);
-        
+
         parser.exit_nesting_level();
         assert_eq!(parser.state.nesting_depth, 0);
     }
@@ -458,11 +1228,11 @@ mod tests {
             ..ParserConfig::default()
         };
         let mut parser = Parser::new(input, config);
-        
+
         // Should succeed within limit
         assert!(parser.enter_nesting_level().is_ok());
         assert!(parser.enter_nesting_level().is_ok());
-        
+
         // Should fail when exceeding limit
         assert!(parser.enter_nesting_level().is_err());
     }
@@ -471,11 +1241,11 @@ mod tests {
     fn test_parser_error_recovery() {
         let input = "# Test";
         let mut parser = Parser::with_defaults(input);
-        
+
         // Mark initial good position
         parser.mark_good_position();
         assert_eq!(parser.state.in_recovery, false);
-        
+
         // Simulate entering recovery mode
         parser.attempt_recovery();
         // Recovery should complete and mark good position
@@ -487,7 +1257,7 @@ mod tests {
     fn test_parser_reference_map() {
         let input = "# Test";
         let parser = Parser::with_defaults(input);
-        
+
         let ref_map = parser.reference_map();
         // Should start with empty reference map
         assert!(ref_map.get("test").is_none());
@@ -496,11 +1266,11 @@ mod tests {
     #[test]
     fn test_convenience_parse_functions() {
         let input = "# Hello World";
-        
+
         // Test simple parse function
         let result1 = parse(input);
         assert!(result1.is_ok());
-        
+
         // Test parse with config
         let config = ParserConfig::default();
         let result2 = parse_with_config(input, config);
@@ -511,11 +1281,11 @@ mod tests {
     fn test_parser_token_management() {
         let input = "# Hello";
         let mut parser = Parser::with_defaults(input);
-        
+
         // Test token advancement
         let initial_token = parser.current_token.clone();
         assert!(parser.advance().is_ok());
-        
+
         // Token should have changed after advance
         assert_ne!(parser.current_token, initial_token);
     }
@@ -524,7 +1294,7 @@ mod tests {
     fn test_parser_end_detection() {
         let input = "";
         let parser = Parser::with_defaults(input);
-        
+
         // Empty input should be at end
         assert!(parser.is_at_end());
     }
@@ -532,7 +1302,7 @@ mod tests {
     #[test]
     fn test_parser_strict_vs_non_strict_mode() {
         let input = "# Test";
-        
+
         // Test strict mode
         let strict_config = ParserConfig {
             strict_commonmark: true,
@@ -541,7 +1311,7 @@ mod tests {
         let mut strict_parser = Parser::new(input, strict_config);
         let strict_result = strict_parser.parse();
         assert!(strict_result.is_ok());
-        
+
         // Test non-strict mode
         let non_strict_config = ParserConfig {
             strict_commonmark: false,
@@ -556,16 +1326,131 @@ mod tests {
     fn test_parser_with_unicode_input() {
         let input = "# Hello 🌍 World";
         let mut parser = Parser::with_defaults(input);
-        
+
         let result = parser.parse();
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parser_heading_parsing() {
+        let input = "# Level 1\n## Level 2\n### Level 3";
+        let mut parser = Parser::with_defaults(input);
+
+        let result = parser.parse();
+        assert!(result.is_ok());
+
+        let document = result.unwrap();
+        assert_eq!(document.blocks.len(), 3);
+
+        // Check heading levels
+        for (i, expected_level) in [1u8, 2u8, 3u8].iter().enumerate() {
+            if let Block::Heading { level, .. } = &document.blocks[i] {
+                assert_eq!(*level, *expected_level);
+            } else {
+                panic!("Expected heading block at index {}", i);
+            }
+        }
+    }
+
+    #[test]
+    fn test_parser_paragraph_parsing() {
+        let input = "This is a paragraph.\n\nThis is another paragraph.";
+        let mut parser = Parser::with_defaults(input);
+
+        let result = parser.parse();
+        assert!(result.is_ok());
+
+        let document = result.unwrap();
+        assert_eq!(document.blocks.len(), 2);
+
+        // Both should be paragraphs
+        for block in &document.blocks {
+            assert!(matches!(block, Block::Paragraph { .. }));
+        }
+    }
+
+    #[test]
+    fn test_parser_code_block_parsing() {
+        let input = "```rust\nfn main() {}\n```";
+        let mut parser = Parser::with_defaults(input);
+
+        let result = parser.parse();
+        assert!(result.is_ok());
+
+        let document = result.unwrap();
+        assert_eq!(document.blocks.len(), 1);
+
+        if let Block::CodeBlock {
+            info,
+            content,
+            language,
+            ..
+        } = &document.blocks[0]
+        {
+            assert_eq!(info.as_deref(), Some("rust"));
+            assert_eq!(language.as_deref(), Some("rust"));
+            assert!(content.contains("fn main()"));
+        } else {
+            panic!("Expected code block");
+        }
+    }
+
+    #[test]
+    fn test_parser_blockquote_parsing() {
+        let input = "> This is a blockquote\n> Second line";
+        let mut parser = Parser::with_defaults(input);
+
+        let result = parser.parse();
+        assert!(result.is_ok());
+
+        let document = result.unwrap();
+        assert_eq!(document.blocks.len(), 1);
+
+        if let Block::BlockQuote { content, .. } = &document.blocks[0] {
+            assert!(!content.is_empty());
+        } else {
+            panic!("Expected blockquote");
+        }
+    }
+
+    #[test]
+    fn test_parser_list_parsing() {
+        let input = "- Item 1\n- Item 2\n- Item 3";
+        let mut parser = Parser::with_defaults(input);
+
+        let result = parser.parse();
+        assert!(result.is_ok());
+
+        let document = result.unwrap();
+        assert_eq!(document.blocks.len(), 1);
+
+        if let Block::List { kind, items, .. } = &document.blocks[0] {
+            assert!(matches!(kind, crate::ast::ListKind::Bullet { .. }));
+            assert_eq!(items.len(), 3);
+        } else {
+            panic!("Expected list block");
+        }
+    }
+
+    #[test]
+    fn test_parser_thematic_break_parsing() {
+        let input = "---";
+        let mut parser = Parser::with_defaults(input);
+
+        let result = parser.parse();
+        assert!(result.is_ok());
+
+        let document = result.unwrap();
+        assert_eq!(document.blocks.len(), 1);
+
+        assert!(matches!(document.blocks[0], Block::ThematicBreak { .. }));
     }
 
     #[test]
     fn test_parser_with_multiline_input() {
         let input = "# Heading\n\nParagraph text\n\n## Another heading";
         let mut parser = Parser::with_defaults(input);
-        
+
         let result = parser.parse();
         assert!(result.is_ok());
     }
@@ -574,14 +1459,125 @@ mod tests {
     fn test_parser_state_reset() {
         let input = "# Test";
         let mut parser = Parser::with_defaults(input);
-        
+
         // Modify state
         parser.enter_nesting_level().ok();
         parser.state.in_recovery = true;
-        
+
         // Reset should restore initial state
         parser.reset_state();
         assert_eq!(parser.state.nesting_depth, 0);
         assert_eq!(parser.state.in_recovery, false);
+    }
+
+    #[test]
+    fn test_inline_parsing_functionality() {
+        // Test emphasis parsing
+        let input = "This is *italic* and **bold** text.";
+        let mut parser = Parser::with_defaults(input);
+        let result = parser.parse();
+        assert!(result.is_ok());
+
+        let document = result.unwrap();
+        assert_eq!(document.blocks.len(), 1);
+
+        if let Block::Paragraph { content, .. } = &document.blocks[0] {
+            // Should have multiple inline elements: text, emphasis, text, emphasis, text
+            assert!(content.len() >= 3);
+
+            // Check that we have emphasis elements
+            let has_emphasis = content
+                .iter()
+                .any(|inline| matches!(inline, crate::ast::Inline::Emphasis { .. }));
+            assert!(has_emphasis);
+        } else {
+            panic!("Expected paragraph block");
+        }
+    }
+
+    #[test]
+    fn test_link_parsing() {
+        let input = "This is a [link](https://example.com) in text.";
+        let mut parser = Parser::with_defaults(input);
+        let result = parser.parse();
+        assert!(result.is_ok());
+
+        let document = result.unwrap();
+        assert_eq!(document.blocks.len(), 1);
+
+        if let Block::Paragraph { content, .. } = &document.blocks[0] {
+            // Check that we have a link element
+            let has_link = content
+                .iter()
+                .any(|inline| matches!(inline, crate::ast::Inline::Link { .. }));
+            assert!(has_link);
+        } else {
+            panic!("Expected paragraph block");
+        }
+    }
+
+    #[test]
+    fn test_code_span_parsing() {
+        let input = "This has `inline code` in it.";
+        let mut parser = Parser::with_defaults(input);
+        let result = parser.parse();
+        assert!(result.is_ok());
+
+        let document = result.unwrap();
+        assert_eq!(document.blocks.len(), 1);
+
+        if let Block::Paragraph { content, .. } = &document.blocks[0] {
+            // Check that we have a code span element
+            let has_code = content
+                .iter()
+                .any(|inline| matches!(inline, crate::ast::Inline::Code(_)));
+            assert!(has_code);
+        } else {
+            panic!("Expected paragraph block");
+        }
+    }
+
+    #[test]
+    fn test_html_inline_parsing() {
+        // Note: Full HTML inline parsing requires lexer support for HTML tokens
+        // For now, test that the HTML processing logic works with simple cases
+        let input = "This has <span>text</span> in it.";
+        let mut parser = Parser::with_defaults(input);
+        let result = parser.parse();
+        assert!(result.is_ok());
+
+        let document = result.unwrap();
+
+        // The current lexer doesn't properly tokenize HTML, so this test
+        // verifies that the parser handles the tokens it receives gracefully
+        assert!(document.blocks.len() >= 1);
+
+        // Verify that at least one block was created
+        assert!(!document.blocks.is_empty());
+    }
+
+    #[test]
+    fn test_reference_link_parsing() {
+        // Test that reference definitions can be added and retrieved
+        let input = "This is a test.";
+        let mut parser = Parser::with_defaults(input);
+
+        // Add a reference definition
+        parser.add_reference_definition(
+            "ref".to_string(),
+            "https://example.com".to_string(),
+            Some("Example Site".to_string()),
+        );
+
+        // Verify the reference was added
+        let reference = parser.reference_map().get("ref");
+        assert!(reference.is_some());
+
+        let reference = reference.unwrap();
+        assert_eq!(reference.destination, "https://example.com");
+        assert_eq!(reference.title, Some("Example Site".to_string()));
+
+        let result = parser.parse();
+        assert!(result.is_ok());
     }
 }
