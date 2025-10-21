@@ -1691,4 +1691,384 @@ mod tests {
         let token4 = lexer.next_token().unwrap();
         assert!(matches!(token4, Token::Text("spaces")));
     }
+
+    // Additional tests for task 2.5: Unicode handling, position tracking, and CommonMark compliance
+
+    #[test]
+    fn test_unicode_emoji_handling() {
+        let input = "Hello 👨‍👩‍👧‍👦 family emoji 🏳️‍🌈 flag";
+        let mut lexer = Lexer::new(input);
+
+        let token1 = lexer.next_token().unwrap();
+        assert!(matches!(token1, Token::Text("Hello")));
+
+        let token2 = lexer.next_token().unwrap();
+        assert!(matches!(token2, Token::Text("👨‍👩‍👧‍👦")));
+
+        let token3 = lexer.next_token().unwrap();
+        assert!(matches!(token3, Token::Text("family")));
+
+        let token4 = lexer.next_token().unwrap();
+        assert!(matches!(token4, Token::Text("emoji")));
+
+        let token5 = lexer.next_token().unwrap();
+        assert!(matches!(token5, Token::Text("🏳️‍🌈")));
+
+        let token6 = lexer.next_token().unwrap();
+        assert!(matches!(token6, Token::Text("flag")));
+    }
+
+    #[test]
+    fn test_unicode_multibyte_characters() {
+        let input = "Héllo Wörld 中文 العربية русский";
+        let mut lexer = Lexer::new(input);
+
+        let token1 = lexer.next_token().unwrap();
+        assert!(matches!(token1, Token::Text("Héllo")));
+
+        let token2 = lexer.next_token().unwrap();
+        assert!(matches!(token2, Token::Text("Wörld")));
+
+        let token3 = lexer.next_token().unwrap();
+        assert!(matches!(token3, Token::Text("中文")));
+
+        let token4 = lexer.next_token().unwrap();
+        assert!(matches!(token4, Token::Text("العربية")));
+
+        let token5 = lexer.next_token().unwrap();
+        assert!(matches!(token5, Token::Text("русский")));
+    }
+
+    #[test]
+    fn test_unicode_combining_characters() {
+        let input = "café naïve résumé";
+        let mut lexer = Lexer::new(input);
+
+        let token1 = lexer.next_token().unwrap();
+        assert!(matches!(token1, Token::Text("café")));
+
+        let token2 = lexer.next_token().unwrap();
+        assert!(matches!(token2, Token::Text("naïve")));
+
+        let token3 = lexer.next_token().unwrap();
+        assert!(matches!(token3, Token::Text("résumé")));
+    }
+
+    #[test]
+    fn test_position_tracking_multiline() {
+        let input = "line1\nline2\nline3";
+        let mut lexer = Lexer::new(input);
+
+        // Initial position
+        assert_eq!(lexer.position().line, 1);
+        assert_eq!(lexer.position().column, 1);
+        assert_eq!(lexer.position().offset, 0);
+
+        // After first token
+        let _token1 = lexer.next_token().unwrap();
+        assert_eq!(lexer.position().line, 1);
+        assert_eq!(lexer.position().column, 6);
+        assert_eq!(lexer.position().offset, 5);
+
+        // After newline
+        let _newline1 = lexer.next_token().unwrap();
+        assert_eq!(lexer.position().line, 2);
+        assert_eq!(lexer.position().column, 1);
+        assert_eq!(lexer.position().offset, 6);
+
+        // After second token
+        let _token2 = lexer.next_token().unwrap();
+        assert_eq!(lexer.position().line, 2);
+        assert_eq!(lexer.position().column, 6);
+        assert_eq!(lexer.position().offset, 11);
+
+        // After second newline
+        let _newline2 = lexer.next_token().unwrap();
+        assert_eq!(lexer.position().line, 3);
+        assert_eq!(lexer.position().column, 1);
+        assert_eq!(lexer.position().offset, 12);
+    }
+
+    #[test]
+    fn test_position_tracking_unicode() {
+        let input = "🌍\n👋";
+        let mut lexer = Lexer::new(input);
+
+        // Initial position
+        assert_eq!(lexer.position().line, 1);
+        assert_eq!(lexer.position().column, 1);
+        assert_eq!(lexer.position().offset, 0);
+
+        // After emoji token
+        let _token1 = lexer.next_token().unwrap();
+        assert_eq!(lexer.position().line, 1);
+        assert_eq!(lexer.position().column, 2);
+        assert_eq!(lexer.position().offset, 4); // Emoji is 4 bytes in UTF-8
+
+        // After newline
+        let _newline = lexer.next_token().unwrap();
+        assert_eq!(lexer.position().line, 2);
+        assert_eq!(lexer.position().column, 1);
+        assert_eq!(lexer.position().offset, 5);
+
+        // After second emoji
+        let _token2 = lexer.next_token().unwrap();
+        assert_eq!(lexer.position().line, 2);
+        assert_eq!(lexer.position().column, 2);
+        assert_eq!(lexer.position().offset, 9); // 5 + 4 bytes
+    }
+
+    #[test]
+    fn test_position_tracking_mixed_content() {
+        let input = "# Heading\n- List item";
+        let mut lexer = Lexer::new(input);
+
+        // ATX heading
+        let token1 = lexer.next_token().unwrap();
+        if let Token::AtxHeading { level, content } = token1 {
+            assert_eq!(level, 1);
+            assert_eq!(content, "Heading");
+        } else {
+            panic!("Expected AtxHeading token");
+        }
+
+        // Position after heading
+        let pos = lexer.position();
+        assert_eq!(pos.line, 1);
+        assert!(pos.offset > 0);
+
+        // Newline
+        let _newline = lexer.next_token().unwrap();
+        assert_eq!(lexer.position().line, 2);
+        assert_eq!(lexer.position().column, 1);
+
+        // List marker
+        let token2 = lexer.next_token().unwrap();
+        assert!(matches!(token2, Token::ListMarker { .. }));
+
+        // List item text
+        let token3 = lexer.next_token().unwrap();
+        assert!(matches!(token3, Token::Text("List")));
+
+        let token4 = lexer.next_token().unwrap();
+        assert!(matches!(token4, Token::Text("item")));
+    }
+
+    #[test]
+    fn test_all_commonmark_block_elements() {
+        // Test comprehensive block element recognition
+        let input = r#"# ATX Heading
+Setext Heading
+==============
+
+> Blockquote
+> Second line
+
+- Bullet list
++ Plus bullet
+* Star bullet
+
+1. Ordered list
+2) Paren delimiter
+
+```rust
+code block
+```
+
+    indented code
+
+---
+***
+___"#;
+
+        let mut lexer = Lexer::new(input);
+        let mut tokens = Vec::new();
+
+        // Collect all tokens
+        loop {
+            let token = lexer.next_token().unwrap();
+            if matches!(token, Token::Eof) {
+                break;
+            }
+            tokens.push(token);
+        }
+
+        // Verify we have the expected token types
+        let has_atx_heading = tokens.iter().any(|t| matches!(t, Token::AtxHeading { .. }));
+        let has_setext_heading = tokens.iter().any(|t| matches!(t, Token::SetextHeading { .. }));
+        let has_blockquote = tokens.iter().any(|t| matches!(t, Token::BlockQuote));
+        let has_bullet_list = tokens.iter().any(|t| matches!(t, Token::ListMarker { kind: ListKind::Bullet { .. }, .. }));
+        let has_ordered_list = tokens.iter().any(|t| matches!(t, Token::ListMarker { kind: ListKind::Ordered { .. }, .. }));
+        let has_code_block = tokens.iter().any(|t| matches!(t, Token::CodeBlock { .. }));
+        let has_thematic_break = tokens.iter().any(|t| matches!(t, Token::ThematicBreak));
+
+        assert!(has_atx_heading, "Missing ATX heading token");
+        assert!(has_setext_heading, "Missing Setext heading token");
+        assert!(has_blockquote, "Missing blockquote token");
+        assert!(has_bullet_list, "Missing bullet list token");
+        assert!(has_ordered_list, "Missing ordered list token");
+        assert!(has_code_block, "Missing code block token");
+        assert!(has_thematic_break, "Missing thematic break token");
+    }
+
+    #[test]
+    fn test_all_commonmark_inline_elements() {
+        let input = r#"*emphasis* **strong** `code` [link](url) ![image](img.jpg)"#;
+        let mut lexer = Lexer::new(input);
+        let mut tokens = Vec::new();
+
+        // Collect all tokens
+        loop {
+            let token = lexer.next_token().unwrap();
+            if matches!(token, Token::Eof) {
+                break;
+            }
+            tokens.push(token);
+        }
+
+        // Verify we have the expected inline token types
+        let has_emphasis = tokens.iter().any(|t| matches!(t, Token::Emphasis { .. }));
+        let has_code_span = tokens.iter().any(|t| matches!(t, Token::CodeSpan(_)));
+        let has_link = tokens.iter().any(|t| matches!(t, Token::Link { .. }));
+        let has_image = tokens.iter().any(|t| matches!(t, Token::Image { .. }));
+
+        assert!(has_emphasis, "Missing emphasis token");
+        assert!(has_code_span, "Missing code span token");
+        assert!(has_link, "Missing link token");
+        assert!(has_image, "Missing image token");
+    }
+
+    #[test]
+    fn test_complex_nested_structures() {
+        let input = r#"> # Heading in blockquote
+> - List in blockquote"#;
+
+        let mut lexer = Lexer::new(input);
+        let mut tokens = Vec::new();
+
+        // Collect all tokens
+        loop {
+            let token = lexer.next_token().unwrap();
+            if matches!(token, Token::Eof) {
+                break;
+            }
+            tokens.push(token);
+        }
+
+        // Should have blockquotes and heading
+        let blockquote_count = tokens.iter().filter(|t| matches!(t, Token::BlockQuote)).count();
+        let has_heading = tokens.iter().any(|t| matches!(t, Token::AtxHeading { .. }));
+
+        assert!(blockquote_count >= 2, "Should have multiple blockquote markers");
+        assert!(has_heading, "Should have heading in blockquote");
+    }
+
+    #[test]
+    fn test_edge_cases_and_malformed_input() {
+        // Test empty input
+        let mut lexer = Lexer::new("");
+        let token = lexer.next_token().unwrap();
+        assert!(matches!(token, Token::Eof));
+
+        // Test only newlines
+        let mut lexer = Lexer::new("\n\n\n");
+        let token1 = lexer.next_token().unwrap();
+        assert!(matches!(token1, Token::Newline));
+        let token2 = lexer.next_token().unwrap();
+        assert!(matches!(token2, Token::Newline));
+        let token3 = lexer.next_token().unwrap();
+        assert!(matches!(token3, Token::Newline));
+        let token4 = lexer.next_token().unwrap();
+        assert!(matches!(token4, Token::Eof));
+
+        // Test too many hash marks (should be treated as text)
+        let mut lexer = Lexer::new("######## Too many hashes");
+        let token1 = lexer.next_token().unwrap();
+        assert!(matches!(token1, Token::Text(_)));
+
+        // Test unclosed code span
+        let mut lexer = Lexer::new("`unclosed code span");
+        let token1 = lexer.next_token().unwrap();
+        assert!(matches!(token1, Token::Text(_)));
+    }
+
+    #[test]
+    fn test_whitespace_and_indentation_handling() {
+        let input = "    indented code\n\t\ttab indented";
+        let mut lexer = Lexer::new(input);
+
+        // Indented code block (4+ spaces)
+        let token1 = lexer.next_token().unwrap();
+        assert!(matches!(token1, Token::CodeBlock { .. }));
+
+        let _newline = lexer.next_token().unwrap();
+
+        // Tab indentation (should also be treated as code block)
+        let token2 = lexer.next_token().unwrap();
+        assert!(matches!(token2, Token::CodeBlock { .. }));
+    }
+
+    #[test]
+    fn test_fenced_code_block_variations() {
+        let input = r#"```
+plain code
+```
+
+```rust
+fn main() {}
+```
+
+````
+code with ``` inside
+````"#;
+
+        let mut lexer = Lexer::new(input);
+        let mut code_blocks = Vec::new();
+
+        loop {
+            let token = lexer.next_token().unwrap();
+            if let Token::CodeBlock { info, content } = token {
+                code_blocks.push((info, content));
+            } else if matches!(token, Token::Eof) {
+                break;
+            }
+        }
+
+        assert_eq!(code_blocks.len(), 3);
+        
+        // First block: no info string
+        assert_eq!(code_blocks[0].0, None);
+        assert!(code_blocks[0].1.contains("plain code"));
+
+        // Second block: with language info
+        assert_eq!(code_blocks[1].0, Some("rust"));
+        assert!(code_blocks[1].1.contains("fn main()"));
+
+        // Third block: 4 backticks with nested backticks
+        assert_eq!(code_blocks[2].0, None);
+        assert!(code_blocks[2].1.contains("```"));
+    }
+
+    #[test]
+    fn test_emphasis_variations() {
+        let input = "*single* **double** ***triple*** _underscore_ __double_underscore__";
+        let mut lexer = Lexer::new(input);
+        let mut emphasis_tokens = Vec::new();
+
+        loop {
+            let token = lexer.next_token().unwrap();
+            if let Token::Emphasis { marker, count } = token {
+                emphasis_tokens.push((marker, count));
+            } else if matches!(token, Token::Eof) {
+                break;
+            }
+        }
+
+        // Should have various emphasis markers
+        assert!(emphasis_tokens.contains(&('*', 1)));
+        assert!(emphasis_tokens.contains(&('*', 2)));
+        assert!(emphasis_tokens.contains(&('*', 3)));
+        assert!(emphasis_tokens.contains(&('_', 1)));
+        assert!(emphasis_tokens.contains(&('_', 2)));
+    }
 }
