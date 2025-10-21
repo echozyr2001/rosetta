@@ -1,10 +1,14 @@
 use crate::lexer::Position;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Base trait for all AST nodes providing basic node functionality
 pub trait Node {
     /// Get source position if available
     fn source_position(&self) -> Option<Position>;
+    
+    /// Get a reference to Any for downcasting
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 /// Trait for visitor pattern support - separate from Node to maintain dyn compatibility
@@ -144,10 +148,22 @@ pub struct SourceMap {
 /// Unique identifier for AST nodes
 pub type NodeId = usize;
 
+/// Global counter for generating unique node IDs
+static NODE_ID_COUNTER: AtomicUsize = AtomicUsize::new(1);
+
+/// Generate a unique node ID
+pub fn generate_node_id() -> NodeId {
+    NODE_ID_COUNTER.fetch_add(1, Ordering::Relaxed)
+}
+
 // Implement Node trait for Document
 impl Node for Document {
     fn source_position(&self) -> Option<Position> {
         None // Document doesn't have a specific position
+    }
+    
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -173,6 +189,10 @@ impl Node for Block {
             Block::ThematicBreak { position, .. } |
             Block::HtmlBlock { position, .. } => *position,
         }
+    }
+    
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -214,6 +234,10 @@ impl Visitable for Block {
 impl Node for Inline {
     fn source_position(&self) -> Option<Position> {
         None // Inline elements don't currently track positions
+    }
+    
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -284,5 +308,743 @@ impl Default for ReferenceMap {
 impl Default for SourceMap {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// AST utility functions for node creation, relationship management, and traversal
+pub mod utils {
+    use super::*;
+
+    /// Node creation helper functions
+    pub struct NodeBuilder;
+
+    impl NodeBuilder {
+        /// Create a new heading block
+        pub fn heading(level: u8, content: Vec<Inline>, position: Option<Position>) -> Block {
+            Block::Heading {
+                level,
+                content,
+                id: None,
+                position,
+            }
+        }
+
+        /// Create a new paragraph block
+        pub fn paragraph(content: Vec<Inline>, position: Option<Position>) -> Block {
+            Block::Paragraph { content, position }
+        }
+
+        /// Create a new code block
+        pub fn code_block(
+            info: Option<String>,
+            content: String,
+            language: Option<String>,
+            position: Option<Position>,
+        ) -> Block {
+            Block::CodeBlock {
+                info,
+                content,
+                language,
+                position,
+            }
+        }
+
+        /// Create a new blockquote
+        pub fn blockquote(content: Vec<Block>, position: Option<Position>) -> Block {
+            Block::BlockQuote { content, position }
+        }
+
+        /// Create a new list
+        pub fn list(
+            kind: ListKind,
+            tight: bool,
+            items: Vec<ListItem>,
+            position: Option<Position>,
+        ) -> Block {
+            Block::List {
+                kind,
+                tight,
+                items,
+                position,
+            }
+        }
+
+        /// Create a new thematic break
+        pub fn thematic_break(position: Option<Position>) -> Block {
+            Block::ThematicBreak { position }
+        }
+
+        /// Create a new HTML block
+        pub fn html_block(content: String, position: Option<Position>) -> Block {
+            Block::HtmlBlock { content, position }
+        }
+
+        /// Create a new text inline
+        pub fn text(content: String) -> Inline {
+            Inline::Text(content)
+        }
+
+        /// Create a new emphasis inline
+        pub fn emphasis(strong: bool, content: Vec<Inline>) -> Inline {
+            Inline::Emphasis { strong, content }
+        }
+
+        /// Create a new code span inline
+        pub fn code_span(content: String) -> Inline {
+            Inline::Code(content)
+        }
+
+        /// Create a new link inline
+        pub fn link(text: Vec<Inline>, destination: String, title: Option<String>) -> Inline {
+            Inline::Link {
+                text,
+                destination,
+                title,
+            }
+        }
+
+        /// Create a new image inline
+        pub fn image(alt: String, destination: String, title: Option<String>) -> Inline {
+            Inline::Image {
+                alt,
+                destination,
+                title,
+            }
+        }
+
+        /// Create a new HTML inline
+        pub fn html_inline(content: String) -> Inline {
+            Inline::HtmlInline(content)
+        }
+
+        /// Create a soft break
+        pub fn soft_break() -> Inline {
+            Inline::SoftBreak
+        }
+
+        /// Create a hard break
+        pub fn hard_break() -> Inline {
+            Inline::HardBreak
+        }
+
+        /// Create a new list item
+        pub fn list_item(
+            content: Vec<Block>,
+            tight: bool,
+            task_list_marker: Option<bool>,
+        ) -> ListItem {
+            ListItem {
+                content,
+                tight,
+                task_list_marker,
+            }
+        }
+
+        /// Create a new document
+        pub fn document(blocks: Vec<Block>) -> Document {
+            Document {
+                blocks,
+                source_map: SourceMap::new(),
+            }
+        }
+    }
+
+    /// Parent-child relationship management utilities
+    pub struct RelationshipManager;
+
+    impl RelationshipManager {
+        /// Get all child blocks from a block
+        pub fn get_child_blocks(block: &Block) -> Vec<&Block> {
+            match block {
+                Block::BlockQuote { content, .. } => content.iter().collect(),
+                Block::List { items, .. } => {
+                    items.iter().flat_map(|item| item.content.iter()).collect()
+                }
+                _ => Vec::new(),
+            }
+        }
+
+        /// Get all child inlines from a block
+        pub fn get_child_inlines(block: &Block) -> Vec<&Inline> {
+            match block {
+                Block::Heading { content, .. } | Block::Paragraph { content, .. } => {
+                    content.iter().collect()
+                }
+                _ => Vec::new(),
+            }
+        }
+
+        /// Get all child inlines from an inline element
+        pub fn get_child_inlines_from_inline(inline: &Inline) -> Vec<&Inline> {
+            match inline {
+                Inline::Emphasis { content, .. } | Inline::Link { text: content, .. } => {
+                    content.iter().collect()
+                }
+                _ => Vec::new(),
+            }
+        }
+
+        /// Count total blocks in a document
+        pub fn count_blocks(document: &Document) -> usize {
+            let mut count = 0;
+            for block in &document.blocks {
+                count += Self::count_blocks_recursive(block);
+            }
+            count
+        }
+
+        /// Recursively count blocks
+        fn count_blocks_recursive(block: &Block) -> usize {
+            let mut count = 1; // Count the current block
+            match block {
+                Block::BlockQuote { content, .. } => {
+                    for child_block in content {
+                        count += Self::count_blocks_recursive(child_block);
+                    }
+                }
+                Block::List { items, .. } => {
+                    for item in items {
+                        for child_block in &item.content {
+                            count += Self::count_blocks_recursive(child_block);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            count
+        }
+
+        /// Count total inline elements in a document
+        pub fn count_inlines(document: &Document) -> usize {
+            let mut count = 0;
+            for block in &document.blocks {
+                count += Self::count_inlines_in_block(block);
+            }
+            count
+        }
+
+        /// Count inline elements in a block
+        fn count_inlines_in_block(block: &Block) -> usize {
+            let mut count = 0;
+            match block {
+                Block::Heading { content, .. } | Block::Paragraph { content, .. } => {
+                    for inline in content {
+                        count += Self::count_inlines_recursive(inline);
+                    }
+                }
+                Block::BlockQuote { content, .. } => {
+                    for child_block in content {
+                        count += Self::count_inlines_in_block(child_block);
+                    }
+                }
+                Block::List { items, .. } => {
+                    for item in items {
+                        for child_block in &item.content {
+                            count += Self::count_inlines_in_block(child_block);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            count
+        }
+
+        /// Recursively count inline elements
+        fn count_inlines_recursive(inline: &Inline) -> usize {
+            let mut count = 1; // Count the current inline
+            match inline {
+                Inline::Emphasis { content, .. } | Inline::Link { text: content, .. } => {
+                    for child_inline in content {
+                        count += Self::count_inlines_recursive(child_inline);
+                    }
+                }
+                _ => {}
+            }
+            count
+        }
+    }
+
+    /// Source position mapping utilities
+    pub struct PositionMapper;
+
+    impl PositionMapper {
+        /// Create a new source map with positions for all nodes in a document
+        pub fn create_source_map(document: &Document) -> SourceMap {
+            let mut source_map = SourceMap::new();
+            let mut node_id = 1;
+
+            for block in &document.blocks {
+                Self::map_block_positions(block, &mut source_map, &mut node_id);
+            }
+
+            source_map
+        }
+
+        /// Map positions for a block and its children
+        fn map_block_positions(block: &Block, source_map: &mut SourceMap, node_id: &mut NodeId) {
+            let current_id = *node_id;
+            *node_id += 1;
+
+            if let Some(position) = block.source_position() {
+                source_map.insert(current_id, position);
+            }
+
+            match block {
+                Block::Heading { content, .. } | Block::Paragraph { content, .. } => {
+                    for inline in content {
+                        Self::map_inline_positions(inline, source_map, node_id);
+                    }
+                }
+                Block::BlockQuote { content, .. } => {
+                    for child_block in content {
+                        Self::map_block_positions(child_block, source_map, node_id);
+                    }
+                }
+                Block::List { items, .. } => {
+                    for item in items {
+                        for child_block in &item.content {
+                            Self::map_block_positions(child_block, source_map, node_id);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        /// Map positions for an inline element and its children
+        fn map_inline_positions(inline: &Inline, source_map: &mut SourceMap, node_id: &mut NodeId) {
+            let current_id = *node_id;
+            *node_id += 1;
+
+            if let Some(position) = inline.source_position() {
+                source_map.insert(current_id, position);
+            }
+
+            match inline {
+                Inline::Emphasis { content, .. } | Inline::Link { text: content, .. } => {
+                    for child_inline in content {
+                        Self::map_inline_positions(child_inline, source_map, node_id);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        /// Find all nodes at a specific position
+        pub fn find_nodes_at_position(
+            document: &Document,
+            target_position: Position,
+        ) -> Vec<NodeId> {
+            let mut matching_nodes = Vec::new();
+            let mut node_id = 1;
+
+            for block in &document.blocks {
+                Self::find_blocks_at_position(
+                    block,
+                    target_position,
+                    &mut matching_nodes,
+                    &mut node_id,
+                );
+            }
+
+            matching_nodes
+        }
+
+        /// Find blocks at a specific position
+        fn find_blocks_at_position(
+            block: &Block,
+            target_position: Position,
+            matching_nodes: &mut Vec<NodeId>,
+            node_id: &mut NodeId,
+        ) {
+            let current_id = *node_id;
+            *node_id += 1;
+
+            if let Some(position) = block.source_position() {
+                if position == target_position {
+                    matching_nodes.push(current_id);
+                }
+            }
+
+            match block {
+                Block::Heading { content, .. } | Block::Paragraph { content, .. } => {
+                    for inline in content {
+                        Self::find_inlines_at_position(
+                            inline,
+                            target_position,
+                            matching_nodes,
+                            node_id,
+                        );
+                    }
+                }
+                Block::BlockQuote { content, .. } => {
+                    for child_block in content {
+                        Self::find_blocks_at_position(
+                            child_block,
+                            target_position,
+                            matching_nodes,
+                            node_id,
+                        );
+                    }
+                }
+                Block::List { items, .. } => {
+                    for item in items {
+                        for child_block in &item.content {
+                            Self::find_blocks_at_position(
+                                child_block,
+                                target_position,
+                                matching_nodes,
+                                node_id,
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        /// Find inline elements at a specific position
+        fn find_inlines_at_position(
+            inline: &Inline,
+            target_position: Position,
+            matching_nodes: &mut Vec<NodeId>,
+            node_id: &mut NodeId,
+        ) {
+            let current_id = *node_id;
+            *node_id += 1;
+
+            if let Some(position) = inline.source_position() {
+                if position == target_position {
+                    matching_nodes.push(current_id);
+                }
+            }
+
+            match inline {
+                Inline::Emphasis { content, .. } | Inline::Link { text: content, .. } => {
+                    for child_inline in content {
+                        Self::find_inlines_at_position(
+                            child_inline,
+                            target_position,
+                            matching_nodes,
+                            node_id,
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// AST traversal utilities implementing depth-first and breadth-first iteration
+    pub struct Traversal;
+
+    impl Traversal {
+        /// Perform depth-first traversal of the document
+        pub fn depth_first<F>(document: &Document, mut visit_fn: F)
+        where
+            F: FnMut(&dyn Node),
+        {
+            visit_fn(document);
+            for block in &document.blocks {
+                Self::depth_first_block(block, &mut visit_fn);
+            }
+        }
+
+        /// Depth-first traversal of a block
+        fn depth_first_block<F>(block: &Block, visit_fn: &mut F)
+        where
+            F: FnMut(&dyn Node),
+        {
+            visit_fn(block);
+            match block {
+                Block::Heading { content, .. } | Block::Paragraph { content, .. } => {
+                    for inline in content {
+                        Self::depth_first_inline(inline, visit_fn);
+                    }
+                }
+                Block::BlockQuote { content, .. } => {
+                    for child_block in content {
+                        Self::depth_first_block(child_block, visit_fn);
+                    }
+                }
+                Block::List { items, .. } => {
+                    for item in items {
+                        for child_block in &item.content {
+                            Self::depth_first_block(child_block, visit_fn);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        /// Depth-first traversal of an inline element
+        fn depth_first_inline<F>(inline: &Inline, visit_fn: &mut F)
+        where
+            F: FnMut(&dyn Node),
+        {
+            visit_fn(inline);
+            match inline {
+                Inline::Emphasis { content, .. } | Inline::Link { text: content, .. } => {
+                    for child_inline in content {
+                        Self::depth_first_inline(child_inline, visit_fn);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        /// Perform breadth-first traversal of the document
+        pub fn breadth_first<F>(document: &Document, mut visit_fn: F)
+        where
+            F: FnMut(&dyn Node),
+        {
+            let mut queue: VecDeque<&dyn Node> = VecDeque::new();
+            queue.push_back(document);
+
+            while let Some(node) = queue.pop_front() {
+                visit_fn(node);
+
+                // Add children to queue based on node type
+                if let Some(document) = node.as_any().downcast_ref::<Document>() {
+                    for block in &document.blocks {
+                        queue.push_back(block);
+                    }
+                } else if let Some(block) = node.as_any().downcast_ref::<Block>() {
+                    match block {
+                        Block::Heading { content, .. } | Block::Paragraph { content, .. } => {
+                            for inline in content {
+                                queue.push_back(inline);
+                            }
+                        }
+                        Block::BlockQuote { content, .. } => {
+                            for child_block in content {
+                                queue.push_back(child_block);
+                            }
+                        }
+                        Block::List { items, .. } => {
+                            for item in items {
+                                for child_block in &item.content {
+                                    queue.push_back(child_block);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                } else if let Some(inline) = node.as_any().downcast_ref::<Inline>() {
+                    match inline {
+                        Inline::Emphasis { content, .. } | Inline::Link { text: content, .. } => {
+                            for child_inline in content {
+                                queue.push_back(child_inline);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        /// Collect all nodes in depth-first order
+        pub fn collect_depth_first<'a>(document: &'a Document) -> Vec<&'a dyn Node> {
+            let mut nodes = Vec::new();
+            Self::depth_first_collect(document, &mut nodes);
+            nodes
+        }
+
+        /// Collect all nodes in breadth-first order  
+        pub fn collect_breadth_first<'a>(document: &'a Document) -> Vec<&'a dyn Node> {
+            let mut nodes = Vec::new();
+            Self::breadth_first_collect(document, &mut nodes);
+            nodes
+        }
+
+        /// Helper function for depth-first collection
+        fn depth_first_collect<'a>(document: &'a Document, nodes: &mut Vec<&'a dyn Node>) {
+            nodes.push(document);
+            for block in &document.blocks {
+                Self::depth_first_block_collect(block, nodes);
+            }
+        }
+
+        /// Helper function for depth-first block collection
+        fn depth_first_block_collect<'a>(block: &'a Block, nodes: &mut Vec<&'a dyn Node>) {
+            nodes.push(block);
+            match block {
+                Block::Heading { content, .. } | Block::Paragraph { content, .. } => {
+                    for inline in content {
+                        Self::depth_first_inline_collect(inline, nodes);
+                    }
+                }
+                Block::BlockQuote { content, .. } => {
+                    for child_block in content {
+                        Self::depth_first_block_collect(child_block, nodes);
+                    }
+                }
+                Block::List { items, .. } => {
+                    for item in items {
+                        for child_block in &item.content {
+                            Self::depth_first_block_collect(child_block, nodes);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        /// Helper function for depth-first inline collection
+        fn depth_first_inline_collect<'a>(inline: &'a Inline, nodes: &mut Vec<&'a dyn Node>) {
+            nodes.push(inline);
+            match inline {
+                Inline::Emphasis { content, .. } | Inline::Link { text: content, .. } => {
+                    for child_inline in content {
+                        Self::depth_first_inline_collect(child_inline, nodes);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        /// Helper function for breadth-first collection
+        fn breadth_first_collect<'a>(document: &'a Document, nodes: &mut Vec<&'a dyn Node>) {
+            let mut queue: VecDeque<&'a dyn Node> = VecDeque::new();
+            queue.push_back(document);
+
+            while let Some(node) = queue.pop_front() {
+                nodes.push(node);
+
+                // Add children to queue based on node type
+                if let Some(document) = node.as_any().downcast_ref::<Document>() {
+                    for block in &document.blocks {
+                        queue.push_back(block);
+                    }
+                } else if let Some(block) = node.as_any().downcast_ref::<Block>() {
+                    match block {
+                        Block::Heading { content, .. } | Block::Paragraph { content, .. } => {
+                            for inline in content {
+                                queue.push_back(inline);
+                            }
+                        }
+                        Block::BlockQuote { content, .. } => {
+                            for child_block in content {
+                                queue.push_back(child_block);
+                            }
+                        }
+                        Block::List { items, .. } => {
+                            for item in items {
+                                for child_block in &item.content {
+                                    queue.push_back(child_block);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                } else if let Some(inline) = node.as_any().downcast_ref::<Inline>() {
+                    match inline {
+                        Inline::Emphasis { content, .. } | Inline::Link { text: content, .. } => {
+                            for child_inline in content {
+                                queue.push_back(child_inline);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::Position;
+
+    #[test]
+    fn test_node_builder_functions() {
+        // Test creating various node types
+        let text_inline = utils::NodeBuilder::text("Hello world".to_string());
+        assert!(matches!(text_inline, Inline::Text(_)));
+
+        let emphasis = utils::NodeBuilder::emphasis(false, vec![text_inline]);
+        assert!(matches!(emphasis, Inline::Emphasis { strong: false, .. }));
+
+        let paragraph = utils::NodeBuilder::paragraph(
+            vec![emphasis],
+            Some(Position { line: 1, column: 1, offset: 0 })
+        );
+        assert!(matches!(paragraph, Block::Paragraph { .. }));
+
+        let document = utils::NodeBuilder::document(vec![paragraph]);
+        assert_eq!(document.blocks.len(), 1);
+    }
+
+    #[test]
+    fn test_relationship_management() {
+        // Create a simple document structure
+        let text = utils::NodeBuilder::text("Hello".to_string());
+        let paragraph = utils::NodeBuilder::paragraph(vec![text], None);
+        let document = utils::NodeBuilder::document(vec![paragraph]);
+
+        // Test counting functions
+        assert_eq!(utils::RelationshipManager::count_blocks(&document), 1);
+        assert_eq!(utils::RelationshipManager::count_inlines(&document), 1);
+
+        // Test getting child inlines
+        if let Block::Paragraph { content, .. } = &document.blocks[0] {
+            let child_inlines = utils::RelationshipManager::get_child_inlines(&document.blocks[0]);
+            assert_eq!(child_inlines.len(), content.len());
+        }
+    }
+
+    #[test]
+    fn test_traversal_methods() {
+        // Create a document with nested structure
+        let text1 = utils::NodeBuilder::text("Hello".to_string());
+        let text2 = utils::NodeBuilder::text("World".to_string());
+        let emphasis = utils::NodeBuilder::emphasis(false, vec![text2]);
+        let paragraph = utils::NodeBuilder::paragraph(vec![text1, emphasis], None);
+        let document = utils::NodeBuilder::document(vec![paragraph]);
+
+        // Test depth-first traversal
+        let mut visited_count = 0;
+        utils::Traversal::depth_first(&document, |_node| {
+            visited_count += 1;
+        });
+        assert!(visited_count > 0);
+
+        // Test breadth-first traversal
+        let mut visited_count_bf = 0;
+        utils::Traversal::breadth_first(&document, |_node| {
+            visited_count_bf += 1;
+        });
+        assert_eq!(visited_count, visited_count_bf); // Should visit same number of nodes
+
+        // Test collection methods
+        let depth_first_nodes = utils::Traversal::collect_depth_first(&document);
+        let breadth_first_nodes = utils::Traversal::collect_breadth_first(&document);
+        assert_eq!(depth_first_nodes.len(), breadth_first_nodes.len());
+        assert!(depth_first_nodes.len() > 0);
+    }
+
+    #[test]
+    fn test_position_mapping() {
+        let position = Position { line: 1, column: 5, offset: 4 };
+        let text = utils::NodeBuilder::text("Hello".to_string());
+        let paragraph = utils::NodeBuilder::paragraph(vec![text], Some(position));
+        let document = utils::NodeBuilder::document(vec![paragraph]);
+
+        // Test source map creation
+        let _source_map = utils::PositionMapper::create_source_map(&document);
+        
+        // Test finding nodes at position
+        let matching_nodes = utils::PositionMapper::find_nodes_at_position(&document, position);
+        assert!(matching_nodes.len() > 0);
+    }
+
+    #[test]
+    fn test_node_id_generation() {
+        let id1 = generate_node_id();
+        let id2 = generate_node_id();
+        assert_ne!(id1, id2);
+        assert!(id2 > id1);
     }
 }
