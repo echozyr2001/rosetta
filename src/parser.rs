@@ -175,11 +175,13 @@ impl<'input> Parser<'input> {
     }
 
     /// Peeks at the next token without consuming it
+    #[allow(dead_code)]
     fn peek_token(&mut self) -> Result<Token<'input>> {
         self.lexer.peek_token()
     }
 
     /// Checks if the current token matches the expected token type
+    #[allow(dead_code)]
     fn current_token_is(&self, expected: &Token) -> bool {
         if let Some(ref current) = self.current_token {
             std::mem::discriminant(current) == std::mem::discriminant(expected)
@@ -189,6 +191,7 @@ impl<'input> Parser<'input> {
     }
 
     /// Consumes the current token if it matches the expected type
+    #[allow(dead_code)]
     fn consume_token(&mut self, expected: Token<'input>) -> Result<Token<'input>> {
         if let Some(current) = &self.current_token
             && std::mem::discriminant(current) == std::mem::discriminant(&expected)
@@ -660,6 +663,7 @@ impl<'input> Parser<'input> {
 
     /// Parse inline elements from the current token stream
     /// This is the main inline parsing method that handles all inline elements
+    #[allow(dead_code)]
     fn parse_inline(&mut self) -> Result<Vec<crate::ast::Inline>> {
         let mut inlines = Vec::new();
 
@@ -725,10 +729,8 @@ impl<'input> Parser<'input> {
 
         let strong = count >= 2;
         let mut content = Vec::new();
-        let mut delimiter_stack = Vec::new();
-
         // Track the emphasis delimiter for proper matching
-        delimiter_stack.push((marker, count));
+        let _delimiter_stack = [(marker, count)];
 
         while !self.is_at_end() {
             match &self.current_token {
@@ -995,14 +997,14 @@ impl<'input> Parser<'input> {
         let inner = &tag[1..tag.len() - 1];
 
         // Check for self-closing tags
-        if inner.ends_with('/') {
-            let tag_name = &inner[..inner.len() - 1].trim();
+        if let Some(stripped) = inner.strip_suffix('/') {
+            let tag_name = stripped.trim();
             return self.is_valid_html_tag_name(tag_name);
         }
 
         // Check for closing tags
-        if inner.starts_with('/') {
-            let tag_name = inner[1..].trim();
+        if let Some(stripped) = inner.strip_prefix('/') {
+            let tag_name = stripped.trim();
             return self.is_valid_html_tag_name(tag_name);
         }
 
@@ -1041,18 +1043,19 @@ impl<'input> Parser<'input> {
     }
 
     /// Check if the current position represents an inline boundary
+    #[allow(dead_code)]
     fn is_inline_boundary(&self) -> bool {
-        match &self.current_token {
+        matches!(
+            &self.current_token,
             Some(Token::AtxHeading { .. })
-            | Some(Token::SetextHeading { .. })
-            | Some(Token::CodeBlock { .. })
-            | Some(Token::BlockQuote)
-            | Some(Token::ListMarker { .. })
-            | Some(Token::ThematicBreak)
-            | Some(Token::Eof)
-            | None => true,
-            _ => false,
-        }
+                | Some(Token::SetextHeading { .. })
+                | Some(Token::CodeBlock { .. })
+                | Some(Token::BlockQuote)
+                | Some(Token::ListMarker { .. })
+                | Some(Token::ThematicBreak)
+                | Some(Token::Eof)
+                | None
+        )
     }
 
     /// Check if the current newline should be treated as a hard break
@@ -1071,6 +1074,7 @@ impl<'input> Parser<'input> {
     }
 
     /// Helper method to parse emphasis inline elements (legacy method for compatibility)
+    #[allow(dead_code)]
     fn parse_emphasis_inline(&mut self, marker: char, count: usize) -> Result<crate::ast::Inline> {
         self.parse_emphasis(marker, count)
     }
@@ -1081,13 +1085,16 @@ impl<'input> Parser<'input> {
         kind1: &crate::lexer::ListKind,
         kind2: &crate::lexer::ListKind,
     ) -> bool {
-        match (kind1, kind2) {
-            (crate::lexer::ListKind::Bullet { .. }, crate::lexer::ListKind::Bullet { .. }) => true,
-            (crate::lexer::ListKind::Ordered { .. }, crate::lexer::ListKind::Ordered { .. }) => {
-                true
-            }
-            _ => false,
-        }
+        matches!(
+            (kind1, kind2),
+            (
+                crate::lexer::ListKind::Bullet { .. },
+                crate::lexer::ListKind::Bullet { .. }
+            ) | (
+                crate::lexer::ListKind::Ordered { .. },
+                crate::lexer::ListKind::Ordered { .. }
+            )
+        )
     }
 
     /// Helper method to check for blank lines between list items
@@ -1106,18 +1113,18 @@ impl<'input> Parser<'input> {
 
     /// Helper method to check if we're at a paragraph boundary
     fn is_paragraph_boundary(&self) -> bool {
-        match &self.current_token {
+        matches!(
+            &self.current_token,
             Some(Token::AtxHeading { .. })
-            | Some(Token::SetextHeading { .. })
-            | Some(Token::CodeBlock { .. })
-            | Some(Token::BlockQuote)
-            | Some(Token::ListMarker { .. })
-            | Some(Token::ThematicBreak)
-            | Some(Token::Newline)
-            | Some(Token::Eof)
-            | None => true,
-            _ => false,
-        }
+                | Some(Token::SetextHeading { .. })
+                | Some(Token::CodeBlock { .. })
+                | Some(Token::BlockQuote)
+                | Some(Token::ListMarker { .. })
+                | Some(Token::ThematicBreak)
+                | Some(Token::Newline)
+                | Some(Token::Eof)
+                | None
+        )
     }
 
     /// Helper method to clone parser state for lookahead
@@ -1162,9 +1169,9 @@ impl<'input> Parser<'input> {
         match &self.current_token {
             Some(Token::Link {
                 text: _,
-                dest,
+                dest: "",
                 title: None,
-            }) if dest.is_empty() => {
+            }) => {
                 // Use peek_token to look ahead
                 if let Ok(next_token) = self.lexer.peek_token() {
                     matches!(next_token, Token::Text(text) if text.starts_with(':'))
@@ -1266,9 +1273,9 @@ mod tests {
         let input = "# Hello World";
         let parser = Parser::with_defaults(input);
 
-        assert_eq!(parser.config().strict_commonmark, true);
+        assert!(parser.config().strict_commonmark);
         assert_eq!(parser.config().max_nesting_depth, 64);
-        assert_eq!(parser.config().track_source_positions, true);
+        assert!(parser.config().track_source_positions);
     }
 
     #[test]
@@ -1283,10 +1290,10 @@ mod tests {
         };
 
         let parser = Parser::new(input, config.clone());
-        assert_eq!(parser.config().strict_commonmark, false);
+        assert!(!parser.config().strict_commonmark);
         assert_eq!(parser.config().max_nesting_depth, 32);
-        assert_eq!(parser.config().enable_gfm_extensions, true);
-        assert_eq!(parser.config().track_source_positions, false);
+        assert!(parser.config().enable_gfm_extensions);
+        assert!(!parser.config().track_source_positions);
         assert_eq!(parser.config().max_errors, Some(50));
     }
 
@@ -1354,17 +1361,17 @@ mod tests {
         let error_handler = Box::new(TestErrorHandler { errors: Vec::new() });
 
         let parser = Parser::with_error_handler(input, config, error_handler);
-        assert_eq!(parser.config().strict_commonmark, true);
+        assert!(parser.config().strict_commonmark);
     }
 
     #[test]
     fn test_parser_config_default() {
         let config = ParserConfig::default();
 
-        assert_eq!(config.strict_commonmark, true);
+        assert!(config.strict_commonmark);
         assert_eq!(config.max_nesting_depth, 64);
-        assert_eq!(config.enable_gfm_extensions, false);
-        assert_eq!(config.track_source_positions, true);
+        assert!(!config.enable_gfm_extensions);
+        assert!(config.track_source_positions);
         assert_eq!(config.max_errors, Some(100));
     }
 
@@ -1375,7 +1382,7 @@ mod tests {
 
         // Test initial state
         assert_eq!(parser.state.nesting_depth, 0);
-        assert_eq!(parser.state.in_recovery, false);
+        assert!(!parser.state.in_recovery);
 
         // Test nesting level management
         assert!(parser.enter_nesting_level().is_ok());
@@ -1409,12 +1416,12 @@ mod tests {
 
         // Mark initial good position
         parser.mark_good_position();
-        assert_eq!(parser.state.in_recovery, false);
+        assert!(!parser.state.in_recovery);
 
         // Simulate entering recovery mode
         parser.attempt_recovery();
         // Recovery should complete and mark good position
-        assert_eq!(parser.state.in_recovery, false);
+        assert!(!parser.state.in_recovery);
         assert_eq!(parser.state.nesting_depth, 0);
     }
 
@@ -1723,7 +1730,7 @@ mod tests {
         // Reset should restore initial state
         parser.reset_state();
         assert_eq!(parser.state.nesting_depth, 0);
-        assert_eq!(parser.state.in_recovery, false);
+        assert!(!parser.state.in_recovery);
     }
 
     #[test]
@@ -1806,7 +1813,7 @@ mod tests {
 
         // The current lexer doesn't properly tokenize HTML, so this test
         // verifies that the parser handles the tokens it receives gracefully
-        assert!(document.blocks.len() >= 1);
+        assert!(!document.blocks.is_empty());
 
         // Verify that at least one block was created
         assert!(!document.blocks.is_empty());
@@ -2144,12 +2151,13 @@ mod tests {
 
         let result = parser.parse();
         // Should either succeed with limited nesting or fail gracefully
-        if result.is_ok() {
-            let document = result.unwrap();
-            assert!(!document.blocks.is_empty());
-        } else {
-            // Error is acceptable for excessive nesting
-            assert!(result.is_err());
+        match result {
+            Ok(document) => {
+                assert!(!document.blocks.is_empty());
+            }
+            Err(_) => {
+                // Error is acceptable for excessive nesting
+            }
         }
     }
 

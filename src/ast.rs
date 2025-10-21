@@ -904,14 +904,12 @@ pub mod utils {
                         }
                         _ => {}
                     }
-                } else if let Some(inline) = node.as_any().downcast_ref::<Inline>() {
-                    match inline {
-                        Inline::Emphasis { content, .. } | Inline::Link { text: content, .. } => {
-                            for child_inline in content {
-                                queue.push_back(child_inline);
-                            }
-                        }
-                        _ => {}
+                } else if let Some(
+                    Inline::Emphasis { content, .. } | Inline::Link { text: content, .. },
+                ) = node.as_any().downcast_ref::<Inline>()
+                {
+                    for child_inline in content {
+                        queue.push_back(child_inline);
                     }
                 }
             }
@@ -1011,14 +1009,12 @@ pub mod utils {
                         }
                         _ => {}
                     }
-                } else if let Some(inline) = node.as_any().downcast_ref::<Inline>() {
-                    match inline {
-                        Inline::Emphasis { content, .. } | Inline::Link { text: content, .. } => {
-                            for child_inline in content {
-                                queue.push_back(child_inline);
-                            }
-                        }
-                        _ => {}
+                } else if let Some(
+                    Inline::Emphasis { content, .. } | Inline::Link { text: content, .. },
+                ) = node.as_any().downcast_ref::<Inline>()
+                {
+                    for child_inline in content {
+                        queue.push_back(child_inline);
                     }
                 }
             }
@@ -1267,7 +1263,7 @@ mod tests {
         let depth_first_nodes = utils::Traversal::collect_depth_first(&document);
         let breadth_first_nodes = utils::Traversal::collect_breadth_first(&document);
         assert_eq!(depth_first_nodes.len(), breadth_first_nodes.len());
-        assert!(depth_first_nodes.len() > 0);
+        assert!(!depth_first_nodes.is_empty());
     }
 
     #[test]
@@ -1286,7 +1282,7 @@ mod tests {
 
         // Test finding nodes at position
         let matching_nodes = utils::PositionMapper::find_nodes_at_position(&document, position);
-        assert!(matching_nodes.len() > 0);
+        assert!(!matching_nodes.is_empty());
     }
 
     #[test]
@@ -1401,9 +1397,8 @@ mod tests {
             }
 
             fn visit_block(&mut self, block: &Block) {
-                match block {
-                    Block::Paragraph { .. } => self.visit_order.push("Paragraph".to_string()),
-                    _ => {}
+                if let Block::Paragraph { .. } = block {
+                    self.visit_order.push("Paragraph".to_string())
                 }
             }
 
@@ -1451,9 +1446,8 @@ mod tests {
             }
 
             fn visit_block(&mut self, block: &Block) {
-                match block {
-                    Block::Paragraph { .. } => self.visit_order.push("Paragraph".to_string()),
-                    _ => {}
+                if let Block::Paragraph { .. } = block {
+                    self.visit_order.push("Paragraph".to_string())
                 }
             }
 

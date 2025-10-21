@@ -1,4 +1,4 @@
-use rosetta::parser::{Parser, ParserConfig, parse};
+use rosetta::parser::{Parser, parse};
 
 fn main() {
     println!("Testing CommonMark compliance features...\n");
