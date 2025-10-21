@@ -341,7 +341,7 @@ impl ReferenceMap {
             definitions: HashMap::new(),
         }
     }
-    
+
     pub fn insert(&mut self, label: String, reference: LinkReference) {
         self.definitions.insert(label.to_lowercase(), reference);
     }
@@ -730,10 +730,10 @@ pub mod utils {
             let current_id = *node_id;
             *node_id += 1;
 
-            if let Some(position) = block.source_position() {
-                if position == target_position {
-                    matching_nodes.push(current_id);
-                }
+            if let Some(position) = block.source_position()
+                && position == target_position
+            {
+                matching_nodes.push(current_id);
             }
 
             match block {
@@ -783,10 +783,10 @@ pub mod utils {
             let current_id = *node_id;
             *node_id += 1;
 
-            if let Some(position) = inline.source_position() {
-                if position == target_position {
-                    matching_nodes.push(current_id);
-                }
+            if let Some(position) = inline.source_position()
+                && position == target_position
+            {
+                matching_nodes.push(current_id);
             }
 
             match inline {
@@ -918,14 +918,14 @@ pub mod utils {
         }
 
         /// Collect all nodes in depth-first order
-        pub fn collect_depth_first<'a>(document: &'a Document) -> Vec<&'a dyn Node> {
+        pub fn collect_depth_first(document: &Document) -> Vec<&dyn Node> {
             let mut nodes = Vec::new();
             Self::depth_first_collect(document, &mut nodes);
             nodes
         }
 
         /// Collect all nodes in breadth-first order  
-        pub fn collect_breadth_first<'a>(document: &'a Document) -> Vec<&'a dyn Node> {
+        pub fn collect_breadth_first(document: &Document) -> Vec<&dyn Node> {
             let mut nodes = Vec::new();
             Self::breadth_first_collect(document, &mut nodes);
             nodes
@@ -1489,17 +1489,17 @@ mod tests {
         let text2 = utils::NodeBuilder::text("Item 2".to_string());
         let paragraph1 = utils::NodeBuilder::paragraph(vec![text1], None);
         let paragraph2 = utils::NodeBuilder::paragraph(vec![text2], None);
-        
+
         let list_item1 = utils::NodeBuilder::list_item(vec![paragraph1], true, None);
         let list_item2 = utils::NodeBuilder::list_item(vec![paragraph2], true, None);
-        
+
         let list = utils::NodeBuilder::list(
             ListKind::Bullet { marker: '-' },
             true,
             vec![list_item1, list_item2],
             None,
         );
-        
+
         let blockquote = utils::NodeBuilder::blockquote(vec![list], None);
         let document = utils::NodeBuilder::document(vec![blockquote]);
 
@@ -1518,9 +1518,21 @@ mod tests {
     #[test]
     fn test_source_position_preservation() {
         // Test that source positions are properly preserved and accessible
-        let position1 = Position { line: 1, column: 1, offset: 0 };
-        let position2 = Position { line: 2, column: 1, offset: 10 };
-        let position3 = Position { line: 3, column: 5, offset: 25 };
+        let position1 = Position {
+            line: 1,
+            column: 1,
+            offset: 0,
+        };
+        let position2 = Position {
+            line: 2,
+            column: 1,
+            offset: 10,
+        };
+        let position3 = Position {
+            line: 3,
+            column: 5,
+            offset: 25,
+        };
 
         let text = utils::NodeBuilder::text("Hello".to_string());
         let paragraph = utils::NodeBuilder::paragraph(vec![text], Some(position1));
@@ -1581,7 +1593,8 @@ mod tests {
 
         // Test bullet list
         let bullet_item1 = utils::NodeBuilder::list_item(vec![paragraph1.clone()], true, None);
-        let bullet_item2 = utils::NodeBuilder::list_item(vec![paragraph2.clone()], true, Some(false)); // unchecked task
+        let bullet_item2 =
+            utils::NodeBuilder::list_item(vec![paragraph2.clone()], true, Some(false)); // unchecked task
         let bullet_list = utils::NodeBuilder::list(
             ListKind::Bullet { marker: '*' },
             true,
@@ -1593,7 +1606,10 @@ mod tests {
         let ordered_item1 = utils::NodeBuilder::list_item(vec![paragraph1], false, None);
         let ordered_item2 = utils::NodeBuilder::list_item(vec![paragraph2], false, Some(true)); // checked task
         let ordered_list = utils::NodeBuilder::list(
-            ListKind::Ordered { start: 1, delimiter: '.' },
+            ListKind::Ordered {
+                start: 1,
+                delimiter: '.',
+            },
             false,
             vec![ordered_item1, ordered_item2],
             None,
@@ -1602,7 +1618,10 @@ mod tests {
         let document = utils::NodeBuilder::document(vec![bullet_list, ordered_list]);
 
         // Verify list structure
-        if let Block::List { kind, tight, items, .. } = &document.blocks[0] {
+        if let Block::List {
+            kind, tight, items, ..
+        } = &document.blocks[0]
+        {
             assert!(matches!(kind, ListKind::Bullet { marker: '*' }));
             assert!(*tight);
             assert_eq!(items.len(), 2);
@@ -1611,8 +1630,17 @@ mod tests {
             panic!("Expected bullet list");
         }
 
-        if let Block::List { kind, tight, items, .. } = &document.blocks[1] {
-            assert!(matches!(kind, ListKind::Ordered { start: 1, delimiter: '.' }));
+        if let Block::List {
+            kind, tight, items, ..
+        } = &document.blocks[1]
+        {
+            assert!(matches!(
+                kind,
+                ListKind::Ordered {
+                    start: 1,
+                    delimiter: '.'
+                }
+            ));
             assert!(!*tight);
             assert_eq!(items.len(), 2);
             assert_eq!(items[1].task_list_marker, Some(true));
@@ -1625,7 +1653,7 @@ mod tests {
     fn test_reference_map() {
         // Test link reference definition storage and retrieval
         let mut ref_map = ReferenceMap::new();
-        
+
         let link_ref = LinkReference {
             label: "example".to_string(),
             destination: "https://example.com".to_string(),
@@ -1633,7 +1661,7 @@ mod tests {
         };
 
         ref_map.insert("Example".to_string(), link_ref.clone());
-        
+
         // Test case-insensitive lookup
         assert!(ref_map.get("example").is_some());
         assert!(ref_map.get("EXAMPLE").is_some());
@@ -1649,8 +1677,16 @@ mod tests {
     fn test_source_map_operations() {
         // Test source map insertion and retrieval
         let mut source_map = SourceMap::new();
-        let position1 = Position { line: 1, column: 1, offset: 0 };
-        let position2 = Position { line: 2, column: 5, offset: 15 };
+        let position1 = Position {
+            line: 1,
+            column: 1,
+            offset: 0,
+        };
+        let position2 = Position {
+            line: 2,
+            column: 5,
+            offset: 15,
+        };
 
         let node_id1 = generate_node_id();
         let node_id2 = generate_node_id();
