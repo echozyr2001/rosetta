@@ -71,12 +71,12 @@ impl ExtensionRegistry {
             self.block_extensions.push(extension);
             // Sort by priority (higher priority first)
             self.block_extensions
-                .sort_by(|a, b| b.priority().cmp(&a.priority()));
+                .sort_by_key(|b| std::cmp::Reverse(b.priority()));
         } else if extension.handles_inlines() {
             self.inline_extensions.push(extension);
             // Sort by priority (higher priority first)
             self.inline_extensions
-                .sort_by(|a, b| b.priority().cmp(&a.priority()));
+                .sort_by_key(|b| std::cmp::Reverse(b.priority()));
         } else {
             return Err(MarkdownError::Extension {
                 message: format!("Extension '{}' must handle either blocks or inlines", name),

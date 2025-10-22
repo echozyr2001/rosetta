@@ -168,7 +168,7 @@ impl EngineConfigBuilder {
         self
     }
 
-    /// Sets the extension manager.
+    // /// Sets the extension manager.
     // pub fn extension_manager(mut self, manager: ExtensionManager) -> Self {
     //     self.config.extension_manager = manager;
     //     self
@@ -504,17 +504,17 @@ impl MarkdownEngine {
         }
     }
 
-    /// Returns a reference to the extension manager.
+    // /// Returns a reference to the extension manager.
     // pub fn extension_manager(&self) -> &ExtensionManager {
     //     &self.config.extension_manager
     // }
 
-    /// Returns a mutable reference to the extension manager.
+    // /// Returns a mutable reference to the extension manager.
     // pub fn extension_manager_mut(&mut self) -> &mut ExtensionManager {
     //     &mut self.config.extension_manager
     // }
 
-    /// Enables or disables extensions.
+    // /// Enables or disables extensions.
     // pub fn set_extensions_enabled(&mut self, enabled: bool) {
     //     self.config.extension_manager.set_enabled(enabled);
     // }

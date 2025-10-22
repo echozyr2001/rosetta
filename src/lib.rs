@@ -645,9 +645,8 @@ fn hello() {
             let result = normal_engine.parse_to_html(input);
             // Should not panic, may or may not produce errors depending on implementation
             // but should always return some result
-            match result {
-                Ok(html) => assert!(!html.is_empty()),
-                Err(_) => {} // Errors are acceptable for malformed input
+            if let Ok(html) = result {
+                assert!(!html.is_empty())
             }
         }
     }

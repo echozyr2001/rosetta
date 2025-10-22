@@ -180,7 +180,7 @@ impl<T> ConcurrentNodePool<T> {
     }
 
     /// Clone the pool for use in multiple threads
-    pub fn clone(&self) -> Self {
+    pub fn clone_pool(&self) -> Self {
         Self {
             pool: Arc::clone(&self.pool),
             factory: Arc::clone(&self.factory),
@@ -540,7 +540,7 @@ mod tests {
         assert_eq!(item2, 100);
 
         // Test cloning
-        let pool2 = pool.clone();
+        let pool2 = pool.clone_pool();
         pool2.put(200);
         let item3 = pool.get();
         assert_eq!(item3, 200);
@@ -562,7 +562,7 @@ mod tests {
         let sections = processor.split_document(content);
 
         // Should split into multiple sections based on headings
-        assert!(sections.len() >= 1);
+        assert!(!sections.is_empty());
 
         // Each section should contain content
         for section in &sections {
@@ -647,7 +647,7 @@ mod tests {
 
     #[test]
     fn test_node_pool_size_limit() {
-        let pool = NodePool::new(|| String::new());
+        let pool = NodePool::new(String::new);
 
         // Add many items to test size limit
         for i in 0..1500 {
