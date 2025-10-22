@@ -46,7 +46,10 @@ pub fn to_html(markdown: &str) -> String {
     });
 
     // 2. AST to DOM conversion (Intermediate Representation)
-    let dom = dom::from_ast(root);
+    let dom = dom::from_ast(root).unwrap_or_else(|_| {
+        // Fallback to empty div on transformation error
+        dom::DomNode::new("div")
+    });
 
     // 3. Target Code Generation
     codegen::generate_html(dom)
@@ -82,8 +85,8 @@ pub fn parse_markdown(markdown: &str) -> Document {
 ///
 /// # Returns
 ///
-/// Returns the root DomNode of the DOM tree
-pub fn ast_to_dom(ast: Document) -> DomNode {
+/// Returns the root DomNode of the DOM tree, or an error if transformation fails
+pub fn ast_to_dom(ast: Document) -> Result<DomNode> {
     dom::from_ast(ast)
 }
 
