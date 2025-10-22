@@ -89,12 +89,12 @@ impl DomNode {
     }
 
     /// Returns an iterator over the children.
-    pub fn children_iter(&self) -> std::slice::Iter<DomChild> {
+    pub fn children_iter(&self) -> std::slice::Iter<'_, DomChild> {
         self.children.iter()
     }
 
     /// Returns a mutable iterator over the children.
-    pub fn children_iter_mut(&mut self) -> std::slice::IterMut<DomChild> {
+    pub fn children_iter_mut(&mut self) -> std::slice::IterMut<'_, DomChild> {
         self.children.iter_mut()
     }
 
@@ -119,7 +119,7 @@ impl DomNode {
     }
 
     /// Returns an iterator over all attributes.
-    pub fn attributes_iter(&self) -> std::collections::hash_map::Iter<String, String> {
+    pub fn attributes_iter(&self) -> std::collections::hash_map::Iter<'_, String, String> {
         self.attributes.iter()
     }
 }
@@ -860,7 +860,7 @@ impl DomTransformer {
 
         // Apply custom element processors (sorted by priority)
         let mut processors = self.config.element_processors.iter().collect::<Vec<_>>();
-        processors.sort_by(|a, b| b.priority().cmp(&a.priority()));
+        processors.sort_by_key(|b| std::cmp::Reverse(b.priority()));
 
         for processor in processors {
             // Check if processor should run before borrowing mutably
@@ -2342,11 +2342,10 @@ mod tests {
         let transformer3 = DomTransformer::new(config3);
         let dom3 = transformer3.transform(&document_with_breaks).unwrap();
 
-        if let DomChild::Element(p) = &dom3.children[0] {
-            if let DomChild::Text(whitespace) = &p.children[1] {
+        if let DomChild::Element(p) = &dom3.children[0]
+            && let DomChild::Text(whitespace) = &p.children[1] {
                 assert_eq!(whitespace, "\n"); // Preserved as newline instead of space
             }
-        }
     }
 
     #[test]
@@ -2494,10 +2493,9 @@ mod tests {
         let document_special = NodeBuilder::document(vec![paragraph_special]);
         let dom_special = transformer.transform(&document_special).unwrap();
 
-        if let DomChild::Element(p) = &dom_special.children[0] {
-            if let DomChild::Text(text) = &p.children[0] {
+        if let DomChild::Element(p) = &dom_special.children[0]
+            && let DomChild::Text(text) = &p.children[0] {
                 assert_eq!(text, "Special chars: <>&\"'\n\t");
             }
-        }
     }
 }
