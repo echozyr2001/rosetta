@@ -44,6 +44,10 @@ pub enum MarkdownError {
         #[from]
         source: std::string::FromUtf8Error,
     },
+
+    /// Extension-related errors.
+    #[error("Extension error: {message}")]
+    Extension { message: String },
 }
 
 /// Convenience type alias for Results in the Markdown engine.
@@ -80,6 +84,13 @@ impl MarkdownError {
         }
     }
 
+    /// Creates a new extension error.
+    pub fn extension_error(message: impl Into<String>) -> Self {
+        MarkdownError::Extension {
+            message: message.into(),
+        }
+    }
+
     /// Returns the position associated with this error, if any.
     pub fn position(&self) -> Option<Position> {
         match self {
@@ -99,6 +110,7 @@ impl MarkdownError {
             MarkdownError::Io { .. } => false,
             MarkdownError::Utf8 { .. } => false,
             MarkdownError::FromUtf8 { .. } => false,
+            MarkdownError::Extension { .. } => true,
         }
     }
 }
@@ -126,6 +138,9 @@ impl Clone for MarkdownError {
             MarkdownError::Utf8 { source } => MarkdownError::Utf8 { source: *source },
             MarkdownError::FromUtf8 { source } => MarkdownError::FromUtf8 {
                 source: source.clone(),
+            },
+            MarkdownError::Extension { message } => MarkdownError::Extension {
+                message: message.clone(),
             },
         }
     }
