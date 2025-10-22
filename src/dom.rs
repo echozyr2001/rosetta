@@ -2343,9 +2343,10 @@ mod tests {
         let dom3 = transformer3.transform(&document_with_breaks).unwrap();
 
         if let DomChild::Element(p) = &dom3.children[0]
-            && let DomChild::Text(whitespace) = &p.children[1] {
-                assert_eq!(whitespace, "\n"); // Preserved as newline instead of space
-            }
+            && let DomChild::Text(whitespace) = &p.children[1]
+        {
+            assert_eq!(whitespace, "\n"); // Preserved as newline instead of space
+        }
     }
 
     #[test]
@@ -2494,8 +2495,9 @@ mod tests {
         let dom_special = transformer.transform(&document_special).unwrap();
 
         if let DomChild::Element(p) = &dom_special.children[0]
-            && let DomChild::Text(text) = &p.children[0] {
-                assert_eq!(text, "Special chars: <>&\"'\n\t");
-            }
+            && let DomChild::Text(text) = &p.children[0]
+        {
+            assert_eq!(text, "Special chars: <>&\"'\n\t");
+        }
     }
 }
