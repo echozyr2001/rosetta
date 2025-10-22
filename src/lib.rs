@@ -8,6 +8,7 @@ pub mod parser;
 
 // Re-export key types for public API
 pub use ast::{Block, Document, Inline, Node, Visitable, Visitor};
+pub use codegen::{HtmlGenerator, OutputConfig, OutputConfigBuilder, HtmlWriter, CustomRenderer, HtmlValidator};
 pub use dom::DomNode;
 pub use error::{MarkdownError, Result};
 pub use lexer::{Lexer, Position, Token};
@@ -36,7 +37,7 @@ pub use lexer::{Lexer, Position, Token};
 ///
 /// let markdown = "# Hello, World!";
 /// let html = to_html(markdown);
-/// assert_eq!(html, "<h1>Hello, World!</h1>");
+/// assert_eq!(html, "<div class=\"markdown-content\"><h1 class=\"heading\">Hello, World!</h1>\n</div>\n");
 /// ```
 pub fn to_html(markdown: &str) -> String {
     // 1. Parsing (includes lexical analysis internally)
@@ -113,7 +114,7 @@ mod tests {
     #[test]
     fn it_works() {
         let markdown = "# Hello, World!";
-        let expected_html = "<h1>Hello, World!</h1>";
+        let expected_html = "<div class=\"markdown-content\"><h1 class=\"heading\">Hello, World!</h1>\n</div>\n";
         assert_eq!(to_html(markdown), expected_html);
     }
 }
