@@ -8,7 +8,9 @@ pub mod parser;
 
 // Re-export key types for public API
 pub use ast::{Block, Document, Inline, Node, Visitable, Visitor};
-pub use codegen::{HtmlGenerator, OutputConfig, OutputConfigBuilder, HtmlWriter, CustomRenderer, HtmlValidator};
+pub use codegen::{
+    CustomRenderer, HtmlGenerator, HtmlValidator, HtmlWriter, OutputConfig, OutputConfigBuilder,
+};
 pub use dom::DomNode;
 pub use error::{MarkdownError, Result};
 pub use lexer::{Lexer, Position, Token};
@@ -114,7 +116,8 @@ mod tests {
     #[test]
     fn it_works() {
         let markdown = "# Hello, World!";
-        let expected_html = "<div class=\"markdown-content\"><h1 class=\"heading\">Hello, World!</h1>\n</div>\n";
+        let expected_html =
+            "<div class=\"markdown-content\"><h1 class=\"heading\">Hello, World!</h1>\n</div>\n";
         assert_eq!(to_html(markdown), expected_html);
     }
 }

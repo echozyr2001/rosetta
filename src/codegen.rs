@@ -36,8 +36,7 @@ pub struct OutputConfig {
 
 /// HTML escaping modes for different contexts
 
-#[derive(Default)]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Default, Debug, Clone, PartialEq)]
 pub enum HtmlEscapingMode {
     /// Standard HTML escaping for text content
     #[default]
@@ -177,8 +176,14 @@ impl OutputConfigBuilder {
     }
 
     /// Add a custom renderer for a specific element type
-    pub fn with_custom_renderer(mut self, element_type: &str, renderer: Box<dyn CustomRenderer>) -> Self {
-        self.config.custom_renderers.insert(element_type.to_string(), renderer);
+    pub fn with_custom_renderer(
+        mut self,
+        element_type: &str,
+        renderer: Box<dyn CustomRenderer>,
+    ) -> Self {
+        self.config
+            .custom_renderers
+            .insert(element_type.to_string(), renderer);
         self
     }
 
@@ -192,10 +197,10 @@ impl OutputConfigBuilder {
 pub trait CustomRenderer: std::fmt::Debug {
     /// Render a DOM node to HTML
     fn render(&self, node: &DomNode, writer: &mut HtmlWriter) -> Result<()>;
-    
+
     /// Get the name of this renderer for debugging
     fn name(&self) -> &str;
-    
+
     /// Get the priority of this renderer (higher numbers run first)
     fn priority(&self) -> i32 {
         0
@@ -221,12 +226,17 @@ impl HtmlWriter {
     }
 
     /// Writes an element with attributes and content
-    pub fn write_element(&mut self, tag: &str, attributes: &HashMap<String, String>, content: &str) {
+    pub fn write_element(
+        &mut self,
+        tag: &str,
+        attributes: &HashMap<String, String>,
+        content: &str,
+    ) {
         self.write_indent();
         self.write_opening_tag(tag, attributes);
-        
+
         self.buffer.push_str(&self.escape_html(content));
-        
+
         self.write_closing_tag(tag);
         self.write_newline_if_enabled();
     }
@@ -236,7 +246,7 @@ impl HtmlWriter {
         self.write_indent();
         self.buffer.push('<');
         self.buffer.push_str(tag);
-        
+
         for (key, value) in attributes {
             self.buffer.push(' ');
             self.buffer.push_str(key);
@@ -244,13 +254,13 @@ impl HtmlWriter {
             self.buffer.push_str(&self.escape_html_attribute(value));
             self.buffer.push('"');
         }
-        
+
         if self.config.xhtml_style {
             self.buffer.push_str(" />");
         } else {
             self.buffer.push('>');
         }
-        
+
         self.write_newline_if_enabled();
     }
 
@@ -268,7 +278,7 @@ impl HtmlWriter {
     pub fn write_opening_tag(&mut self, tag: &str, attributes: &HashMap<String, String>) {
         self.buffer.push('<');
         self.buffer.push_str(tag);
-        
+
         for (key, value) in attributes {
             self.buffer.push(' ');
             self.buffer.push_str(key);
@@ -276,7 +286,7 @@ impl HtmlWriter {
             self.buffer.push_str(&self.escape_html_attribute(value));
             self.buffer.push('"');
         }
-        
+
         self.buffer.push('>');
     }
 
@@ -460,7 +470,7 @@ impl HtmlGenerator {
     /// Generates HTML from a DOM node
     pub fn generate_from_dom(&self, root: &DomNode) -> Result<String> {
         let mut writer = HtmlWriter::new(self.config.clone());
-        
+
         // Add DOCTYPE if specified or if HTML5 compliance is enabled
         if let Some(doctype) = &self.config.doctype {
             writer.write_raw(&format!("<!DOCTYPE {}>\n", doctype));
@@ -509,7 +519,7 @@ impl HtmlGenerator {
 
         // Create a mutable copy of the node to add CommonMark attributes
         let mut enhanced_node = node.clone();
-        
+
         // Add CommonMark-specific attributes
         if writer.config.add_commonmark_attributes {
             let element_type = self.determine_commonmark_element_type(&enhanced_node);
@@ -529,7 +539,7 @@ impl HtmlGenerator {
         // Handle children
         if enhanced_node.has_children() {
             let has_block_children = self.has_block_children(&enhanced_node);
-            
+
             if has_block_children && writer.config.pretty_print {
                 writer.buffer.push('\n');
                 writer.indent();
@@ -545,7 +555,10 @@ impl HtmlGenerator {
                             writer.write_indent();
                         }
                         writer.write_text(text);
-                        if has_block_children && writer.config.pretty_print && i < enhanced_node.child_count() - 1 {
+                        if has_block_children
+                            && writer.config.pretty_print
+                            && i < enhanced_node.child_count() - 1
+                        {
                             writer.buffer.push('\n');
                         }
                     }
@@ -561,7 +574,7 @@ impl HtmlGenerator {
 
         // Write closing tag
         writer.write_closing_tag(&enhanced_node.tag);
-        
+
         if self.is_block_element(&enhanced_node.tag) {
             writer.write_newline_if_enabled();
         }
@@ -597,7 +610,21 @@ impl HtmlGenerator {
         // Check for obsolete HTML5 elements
         if matches!(
             tag,
-            "acronym" | "applet" | "basefont" | "big" | "center" | "dir" | "font" | "frame" | "frameset" | "isindex" | "noframes" | "s" | "strike" | "tt" | "u"
+            "acronym"
+                | "applet"
+                | "basefont"
+                | "big"
+                | "center"
+                | "dir"
+                | "font"
+                | "frame"
+                | "frameset"
+                | "isindex"
+                | "noframes"
+                | "s"
+                | "strike"
+                | "tt"
+                | "u"
         ) {
             return Err(MarkdownError::Generation {
                 message: format!("Tag '{}' is obsolete in HTML5", tag),
@@ -657,7 +684,10 @@ impl HtmlGenerator {
             "em" | "strong" => "emphasis".to_string(),
             "code" => {
                 // Distinguish between inline code and code blocks
-                if node.get_attribute("class").is_some_and(|c| c.contains("inline-code")) {
+                if node
+                    .get_attribute("class")
+                    .is_some_and(|c| c.contains("inline-code"))
+                {
                     "inline-code".to_string()
                 } else {
                     "code".to_string()
@@ -676,13 +706,41 @@ impl HtmlGenerator {
             // HTML5 void elements (cannot have closing tags)
             matches!(
                 tag,
-                "area" | "base" | "br" | "col" | "embed" | "hr" | "img" | "input" | "link" | "meta" | "param" | "source" | "track" | "wbr"
+                "area"
+                    | "base"
+                    | "br"
+                    | "col"
+                    | "embed"
+                    | "hr"
+                    | "img"
+                    | "input"
+                    | "link"
+                    | "meta"
+                    | "param"
+                    | "source"
+                    | "track"
+                    | "wbr"
             )
         } else {
             // Legacy HTML compatibility
             matches!(
                 tag,
-                "area" | "base" | "br" | "col" | "embed" | "hr" | "img" | "input" | "link" | "meta" | "param" | "source" | "track" | "wbr" | "frame" | "isindex"
+                "area"
+                    | "base"
+                    | "br"
+                    | "col"
+                    | "embed"
+                    | "hr"
+                    | "img"
+                    | "input"
+                    | "link"
+                    | "meta"
+                    | "param"
+                    | "source"
+                    | "track"
+                    | "wbr"
+                    | "frame"
+                    | "isindex"
             )
         }
     }
@@ -693,18 +751,76 @@ impl HtmlGenerator {
             // HTML5 block-level elements
             matches!(
                 tag,
-                "address" | "article" | "aside" | "blockquote" | "details" | "dialog" | "dd" | "div" | "dl" | "dt" | "fieldset" | "figcaption" | "figure" | "footer" | "form" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "header" | "hgroup" | "hr" | "li" | "main" | "nav" | "ol" | "p" | "pre" | "section" | "table" | "ul" | "canvas" | "noscript" | "output" | "video" | "audio"
+                "address"
+                    | "article"
+                    | "aside"
+                    | "blockquote"
+                    | "details"
+                    | "dialog"
+                    | "dd"
+                    | "div"
+                    | "dl"
+                    | "dt"
+                    | "fieldset"
+                    | "figcaption"
+                    | "figure"
+                    | "footer"
+                    | "form"
+                    | "h1"
+                    | "h2"
+                    | "h3"
+                    | "h4"
+                    | "h5"
+                    | "h6"
+                    | "header"
+                    | "hgroup"
+                    | "hr"
+                    | "li"
+                    | "main"
+                    | "nav"
+                    | "ol"
+                    | "p"
+                    | "pre"
+                    | "section"
+                    | "table"
+                    | "ul"
+                    | "canvas"
+                    | "noscript"
+                    | "output"
+                    | "video"
+                    | "audio"
             )
         } else {
             // Legacy HTML block elements
             matches!(
                 tag,
-                "address" | "blockquote" | "dd" | "div" | "dl" | "dt" | "fieldset" | "form" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "hr" | "li" | "ol" | "p" | "pre" | "table" | "ul" | "center" | "dir" | "menu"
+                "address"
+                    | "blockquote"
+                    | "dd"
+                    | "div"
+                    | "dl"
+                    | "dt"
+                    | "fieldset"
+                    | "form"
+                    | "h1"
+                    | "h2"
+                    | "h3"
+                    | "h4"
+                    | "h5"
+                    | "h6"
+                    | "hr"
+                    | "li"
+                    | "ol"
+                    | "p"
+                    | "pre"
+                    | "table"
+                    | "ul"
+                    | "center"
+                    | "dir"
+                    | "menu"
             )
         }
     }
-
-
 
     /// Checks if a node has block-level children
     fn has_block_children(&self, node: &DomNode) -> bool {
@@ -727,7 +843,7 @@ impl HtmlValidator {
         // Basic validation - check for balanced tags
         let mut tag_stack = Vec::new();
         let mut chars = html.chars().peekable();
-        
+
         #[allow(clippy::while_let_on_iterator)]
         while let Some(ch) = chars.next() {
             if ch == '<' {
@@ -739,19 +855,22 @@ impl HtmlValidator {
                     }
                     tag_content.push(ch);
                 }
-                
+
                 // Skip DOCTYPE declarations and comments
                 if tag_content.starts_with('!') || tag_content.starts_with('?') {
                     continue;
                 }
-                
+
                 if let Some(tag_name_part) = tag_content.strip_prefix('/') {
                     // Closing tag
                     let tag_name = tag_name_part.split_whitespace().next().unwrap_or("");
                     if let Some(expected) = tag_stack.pop() {
                         if expected != tag_name {
                             return Err(MarkdownError::Generation {
-                                message: format!("Mismatched closing tag: expected {}, found {}", expected, tag_name),
+                                message: format!(
+                                    "Mismatched closing tag: expected {}, found {}",
+                                    expected, tag_name
+                                ),
                             });
                         }
                     } else {
@@ -770,13 +889,13 @@ impl HtmlValidator {
                 }
             }
         }
-        
+
         if !tag_stack.is_empty() {
             return Err(MarkdownError::Generation {
                 message: format!("Unclosed tags: {:?}", tag_stack),
             });
         }
-        
+
         Ok(())
     }
 
@@ -784,10 +903,10 @@ impl HtmlValidator {
     pub fn validate_html5_compliance(html: &str) -> Result<()> {
         // Check for obsolete HTML elements
         let obsolete_elements = [
-            "acronym", "applet", "basefont", "big", "center", "dir", "font", 
-            "frame", "frameset", "isindex", "noframes", "s", "strike", "tt", "u"
+            "acronym", "applet", "basefont", "big", "center", "dir", "font", "frame", "frameset",
+            "isindex", "noframes", "s", "strike", "tt", "u",
         ];
-        
+
         for element in &obsolete_elements {
             if html.contains(&format!("<{}", element)) {
                 return Err(MarkdownError::Generation {
@@ -805,10 +924,10 @@ impl HtmlValidator {
 
         // Validate void elements don't have closing tags
         let void_elements = [
-            "area", "base", "br", "col", "embed", "hr", "img", "input", 
-            "link", "meta", "param", "source", "track", "wbr"
+            "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param",
+            "source", "track", "wbr",
         ];
-        
+
         for element in &void_elements {
             let closing_tag = format!("</{}>", element);
             if html.contains(&closing_tag) {
@@ -893,17 +1012,17 @@ mod commonmark_compliance_tests {
             .with_html_structure_validation(true)
             .with_document_wrapper(true)
             .build();
-        
+
         let generator = HtmlGenerator::new(config);
-        
+
         // Create a simple DOM structure
         let mut root = DomNode::new("div");
         let mut paragraph = DomNode::new("p");
         paragraph.add_text_child("Hello, World!");
         root.add_element_child(paragraph);
-        
+
         let html = generator.generate_from_dom(&root).unwrap();
-        
+
         // Should include HTML5 DOCTYPE
         assert!(html.contains("<!DOCTYPE html>"));
         // Should include HTML5 meta viewport
@@ -916,36 +1035,36 @@ mod commonmark_compliance_tests {
     fn test_html_escaping_modes() {
         let mut root = DomNode::new("p");
         root.add_text_child("Test <script>alert('xss')</script> & \"quotes\"");
-        
+
         // Test standard escaping
         let config_standard = OutputConfigBuilder::new()
             .with_html_escaping_mode(HtmlEscapingMode::Standard)
             .build();
         let generator_standard = HtmlGenerator::new(config_standard);
         let html_standard = generator_standard.generate_from_dom(&root).unwrap();
-        
+
         assert!(html_standard.contains("&lt;script&gt;"));
         assert!(html_standard.contains("&amp;"));
         assert!(html_standard.contains("&quot;"));
-        
+
         // Test aggressive escaping
         let config_aggressive = OutputConfigBuilder::new()
             .with_html_escaping_mode(HtmlEscapingMode::Aggressive)
             .build();
         let generator_aggressive = HtmlGenerator::new(config_aggressive);
         let html_aggressive = generator_aggressive.generate_from_dom(&root).unwrap();
-        
+
         assert!(html_aggressive.contains("&lt;script&gt;"));
         assert!(html_aggressive.contains("&amp;"));
         assert!(html_aggressive.contains("&quot;"));
-        
+
         // Test minimal escaping
         let config_minimal = OutputConfigBuilder::new()
             .with_html_escaping_mode(HtmlEscapingMode::Minimal)
             .build();
         let generator_minimal = HtmlGenerator::new(config_minimal);
         let html_minimal = generator_minimal.generate_from_dom(&root).unwrap();
-        
+
         assert!(html_minimal.contains("&lt;script&gt;"));
         assert!(html_minimal.contains("&amp;"));
         // Minimal mode doesn't escape quotes
@@ -958,18 +1077,18 @@ mod commonmark_compliance_tests {
         custom_mappings.insert('<', "&LT;".to_string());
         custom_mappings.insert('>', "&GT;".to_string());
         custom_mappings.insert('&', "&AMP;".to_string());
-        
+
         let config = OutputConfigBuilder::new()
             .with_html_escaping_mode(HtmlEscapingMode::Custom(custom_mappings))
             .build();
-        
+
         let generator = HtmlGenerator::new(config);
-        
+
         let mut root = DomNode::new("p");
         root.add_text_child("Test <>&");
-        
+
         let html = generator.generate_from_dom(&root).unwrap();
-        
+
         assert!(html.contains("&LT;"));
         assert!(html.contains("&GT;"));
         assert!(html.contains("&AMP;"));
@@ -980,15 +1099,15 @@ mod commonmark_compliance_tests {
         let config = OutputConfigBuilder::new()
             .with_commonmark_attributes(true)
             .build();
-        
+
         let generator = HtmlGenerator::new(config);
-        
+
         // Test heading with CommonMark attributes
         let mut heading = DomNode::new("h2");
         heading.add_text_child("Test Heading");
-        
+
         let html = generator.generate_from_dom(&heading).unwrap();
-        
+
         assert!(html.contains("data-commonmark-type=\"heading\""));
         assert!(html.contains("data-heading-level=\"2\""));
     }
@@ -998,24 +1117,24 @@ mod commonmark_compliance_tests {
         let config = OutputConfigBuilder::new()
             .with_html5_compliance(true)
             .build();
-        
+
         let generator = HtmlGenerator::new(config);
-        
+
         // Test various CommonMark elements
         let mut root = DomNode::new("div");
-        
+
         // Heading
         let mut h1 = DomNode::new("h1");
         h1.add_text_child("Heading");
         root.add_element_child(h1);
-        
+
         // Paragraph with emphasis
         let mut p = DomNode::new("p");
         let mut em = DomNode::new("em");
         em.add_text_child("emphasized");
         p.add_element_child(em);
         root.add_element_child(p);
-        
+
         // Code block
         let mut pre = DomNode::new("pre");
         let mut code = DomNode::new("code");
@@ -1023,20 +1142,20 @@ mod commonmark_compliance_tests {
         code.add_text_child("fn main() {}");
         pre.add_element_child(code);
         root.add_element_child(pre);
-        
+
         // List
         let mut ul = DomNode::new("ul");
         let mut li = DomNode::new("li");
         li.add_text_child("List item");
         ul.add_element_child(li);
         root.add_element_child(ul);
-        
+
         // Thematic break (void element)
         let hr = DomNode::new("hr");
         root.add_element_child(hr);
-        
+
         let html = generator.generate_from_dom(&root).unwrap();
-        
+
         // Verify proper tag generation
         assert!(html.contains("<h1>Heading</h1>"));
         assert!(html.contains("<em>emphasized</em>"));
@@ -1054,25 +1173,26 @@ mod commonmark_compliance_tests {
         // Test well-formed HTML validation
         let well_formed_html = "<div><p>Hello</p></div>";
         assert!(HtmlValidator::validate_well_formed(well_formed_html).is_ok());
-        
+
         let malformed_html = "<div><p>Hello</div></p>";
         assert!(HtmlValidator::validate_well_formed(malformed_html).is_err());
-        
+
         // Test HTML5 compliance validation
         let html5_compliant = "<!DOCTYPE html><html><body><p>Content</p></body></html>";
         assert!(HtmlValidator::validate_html5_compliance(html5_compliant).is_ok());
-        
+
         let obsolete_html = "<center>Centered text</center>";
         assert!(HtmlValidator::validate_html5_compliance(obsolete_html).is_err());
-        
+
         // Test void element validation
         let invalid_void = "<br></br>";
         assert!(HtmlValidator::validate_html5_compliance(invalid_void).is_err());
-        
+
         // Test CommonMark compliance
-        let commonmark_compliant = "<h1>Title</h1><pre><code class=\"language-rust\">code</code></pre>";
+        let commonmark_compliant =
+            "<h1>Title</h1><pre><code class=\"language-rust\">code</code></pre>";
         assert!(HtmlValidator::validate_commonmark_compliance(commonmark_compliant).is_ok());
-        
+
         let invalid_heading = "<h7>Invalid heading</h7>";
         assert!(HtmlValidator::validate_commonmark_compliance(invalid_heading).is_err());
     }
@@ -1083,15 +1203,15 @@ mod commonmark_compliance_tests {
             .with_html5_compliance(true)
             .with_html_structure_validation(true)
             .build();
-        
+
         // Test that validation catches errors during generation
         let generator = HtmlGenerator::new(config);
-        
+
         let mut root = DomNode::new("div");
         let mut paragraph = DomNode::new("p");
         paragraph.add_text_child("Valid content");
         root.add_element_child(paragraph);
-        
+
         // This should succeed
         let result = generator.generate_from_dom(&root);
         assert!(result.is_ok());
@@ -1102,18 +1222,20 @@ mod commonmark_compliance_tests {
         let config = OutputConfigBuilder::new()
             .with_html_escaping_mode(HtmlEscapingMode::Standard)
             .build();
-        
+
         let generator = HtmlGenerator::new(config);
-        
+
         let mut root = DomNode::new("a");
         root.add_attribute("href", "https://example.com?param=\"value\"&other=test");
         root.add_attribute("title", "Link with \"quotes\" & ampersands");
         root.add_text_child("Link text");
-        
+
         let html = generator.generate_from_dom(&root).unwrap();
-        
+
         // Attributes should be properly escaped
-        assert!(html.contains("href=\"https://example.com?param=&quot;value&quot;&amp;other=test\""));
+        assert!(
+            html.contains("href=\"https://example.com?param=&quot;value&quot;&amp;other=test\"")
+        );
         assert!(html.contains("title=\"Link with &quot;quotes&quot; &amp; ampersands\""));
     }
 
@@ -1122,16 +1244,19 @@ mod commonmark_compliance_tests {
         let config = OutputConfigBuilder::new()
             .with_html5_compliance(true)
             .build();
-        
+
         let generator = HtmlGenerator::new(config);
-        
+
         // Test all HTML5 void elements
-        let void_elements = ["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"];
-        
+        let void_elements = [
+            "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param",
+            "source", "track", "wbr",
+        ];
+
         for element in &void_elements {
             let node = DomNode::new(element);
             let html = generator.generate_from_dom(&node).unwrap();
-            
+
             // Should not have closing tag
             assert!(!html.contains(&format!("</{}>", element)));
             // Should have opening tag
@@ -1147,29 +1272,29 @@ mod commonmark_compliance_tests {
             .with_indent_size(4)
             .with_newlines(true)
             .build();
-        
+
         let generator_pretty = HtmlGenerator::new(config_pretty);
-        
+
         let mut root = DomNode::new("div");
         let mut paragraph = DomNode::new("p");
         paragraph.add_text_child("Hello World");
         root.add_element_child(paragraph);
-        
+
         let html_pretty = generator_pretty.generate_from_dom(&root).unwrap();
-        
+
         // Should contain indentation and newlines
         assert!(html_pretty.contains("    <p>"));
         assert!(html_pretty.contains("\n"));
-        
+
         // Test compact formatting (no pretty printing)
         let config_compact = OutputConfigBuilder::new()
             .with_pretty_print(false)
             .with_newlines(false)
             .build();
-        
+
         let generator_compact = HtmlGenerator::new(config_compact);
         let html_compact = generator_compact.generate_from_dom(&root).unwrap();
-        
+
         // Should be more compact
         assert!(!html_compact.contains("    "));
         assert!(html_compact.len() < html_pretty.len());
@@ -1178,27 +1303,27 @@ mod commonmark_compliance_tests {
     #[test]
     fn test_ast_to_html_generation() {
         use crate::ast::utils::NodeBuilder;
-        
+
         // Create a simple AST document using NodeBuilder
         let heading_text = NodeBuilder::text("Test Heading".to_string());
         let heading = NodeBuilder::heading(1, vec![heading_text], None);
-        
+
         // Create paragraph with emphasis
         let text1 = NodeBuilder::text("This is ".to_string());
         let emphasized_text = NodeBuilder::text("emphasized".to_string());
         let emphasis = NodeBuilder::emphasis(false, vec![emphasized_text]);
         let text2 = NodeBuilder::text(" text.".to_string());
         let paragraph = NodeBuilder::paragraph(vec![text1, emphasis, text2], None);
-        
+
         let document = NodeBuilder::document(vec![heading, paragraph]);
-        
+
         let config = OutputConfigBuilder::new()
             .with_html5_compliance(true)
             .build();
-        
+
         let generator = HtmlGenerator::new(config);
         let html = generator.generate_from_ast(&document).unwrap();
-        
+
         // Verify AST to HTML conversion works correctly (DOM conversion adds CSS classes)
         assert!(html.contains("<h1"));
         assert!(html.contains("Test Heading</h1>"));
@@ -1215,24 +1340,24 @@ mod commonmark_compliance_tests {
             .with_html5_compliance(true)
             .with_commonmark_attributes(false) // Test without extra attributes
             .build();
-        
+
         let generator = HtmlGenerator::new(config);
-        
+
         // Test all CommonMark block elements
         let mut root = DomNode::new("div");
-        
+
         // Headings (all levels)
         for level in 1..=6 {
             let mut heading = DomNode::new(&format!("h{}", level));
             heading.add_text_child(&format!("Heading Level {}", level));
             root.add_element_child(heading);
         }
-        
+
         // Paragraph
         let mut paragraph = DomNode::new("p");
         paragraph.add_text_child("This is a paragraph.");
         root.add_element_child(paragraph);
-        
+
         // Code block
         let mut pre = DomNode::new("pre");
         let mut code = DomNode::new("code");
@@ -1240,14 +1365,14 @@ mod commonmark_compliance_tests {
         code.add_text_child("let x = 42;");
         pre.add_element_child(code);
         root.add_element_child(pre);
-        
+
         // Blockquote
         let mut blockquote = DomNode::new("blockquote");
         let mut quote_p = DomNode::new("p");
         quote_p.add_text_child("This is a quote.");
         blockquote.add_element_child(quote_p);
         root.add_element_child(blockquote);
-        
+
         // Lists
         let mut ul = DomNode::new("ul");
         let mut li1 = DomNode::new("li");
@@ -1257,7 +1382,7 @@ mod commonmark_compliance_tests {
         ul.add_element_child(li1);
         ul.add_element_child(li2);
         root.add_element_child(ul);
-        
+
         let mut ol = DomNode::new("ol");
         let mut oli1 = DomNode::new("li");
         oli1.add_text_child("Ordered item 1");
@@ -1266,53 +1391,69 @@ mod commonmark_compliance_tests {
         ol.add_element_child(oli1);
         ol.add_element_child(oli2);
         root.add_element_child(ol);
-        
+
         // Thematic break
         let hr = DomNode::new("hr");
         root.add_element_child(hr);
-        
+
         // Inline elements in a paragraph
         let mut inline_p = DomNode::new("p");
         inline_p.add_text_child("Text with ");
-        
+
         let mut em = DomNode::new("em");
         em.add_text_child("emphasis");
         inline_p.add_element_child(em);
-        
+
         inline_p.add_text_child(" and ");
-        
+
         let mut strong = DomNode::new("strong");
         strong.add_text_child("strong");
         inline_p.add_element_child(strong);
-        
+
         inline_p.add_text_child(" and ");
-        
+
         let mut inline_code = DomNode::new("code");
         inline_code.add_text_child("code");
         inline_p.add_element_child(inline_code);
-        
+
         inline_p.add_text_child(" and ");
-        
+
         let mut link = DomNode::new("a");
         link.add_attribute("href", "https://example.com");
         link.add_text_child("link");
         inline_p.add_element_child(link);
-        
+
         inline_p.add_text_child(".");
         root.add_element_child(inline_p);
-        
-        let html = generator.generate_from_dom(&root).unwrap();
-        
 
-        
+        let html = generator.generate_from_dom(&root).unwrap();
+
         // Verify all elements are correctly generated (check for tag presence and content)
         assert!(html.contains("<h1>") && html.contains("Heading Level 1</h1>"));
         assert!(html.contains("<h6>") && html.contains("Heading Level 6</h6>"));
         assert!(html.contains("<p>") && html.contains("This is a paragraph.</p>"));
-        assert!(html.contains("<pre>") && html.contains("<code") && html.contains("let x = 42;</code></pre>"));
-        assert!(html.contains("<blockquote>") && html.contains("This is a quote.") && html.contains("</blockquote>"));
-        assert!(html.contains("<ul>") && html.contains("Bullet item 1") && html.contains("Bullet item 2") && html.contains("</ul>"));
-        assert!(html.contains("<ol>") && html.contains("Ordered item 1") && html.contains("Ordered item 2") && html.contains("</ol>"));
+        assert!(
+            html.contains("<pre>")
+                && html.contains("<code")
+                && html.contains("let x = 42;</code></pre>")
+        );
+        assert!(
+            html.contains("<blockquote>")
+                && html.contains("This is a quote.")
+                && html.contains("</blockquote>")
+        );
+        assert!(
+            html.contains("<ul>")
+                && html.contains("Bullet item 1")
+                && html.contains("Bullet item 2")
+                && html.contains("</ul>")
+        );
+        assert!(
+            html.contains("<ol>")
+                && html.contains("Ordered item 1")
+                && html.contains("Ordered item 2")
+                && html.contains("</ol>")
+        );
         assert!(html.contains("<hr>"));
         assert!(!html.contains("</hr>")); // Void element
         assert!(html.contains("<em>") && html.contains("emphasis</em>"));
@@ -1326,9 +1467,9 @@ mod commonmark_compliance_tests {
         let config = OutputConfigBuilder::new()
             .with_html_escaping_mode(HtmlEscapingMode::Standard)
             .build();
-        
+
         let generator = HtmlGenerator::new(config);
-        
+
         // Test various special characters in text content
         let test_cases = vec![
             ("<script>", "&lt;script&gt;"),
@@ -1337,23 +1478,27 @@ mod commonmark_compliance_tests {
             ("'single'", "&#x27;single&#x27;"),
             ("Mix <>&\"'", "Mix &lt;&gt;&amp;&quot;&#x27;"),
         ];
-        
+
         for (input, expected) in test_cases {
             let mut node = DomNode::new("p");
             node.add_text_child(input);
-            
+
             let html = generator.generate_from_dom(&node).unwrap();
-            assert!(html.contains(expected), "Failed to escape '{}' correctly", input);
+            assert!(
+                html.contains(expected),
+                "Failed to escape '{}' correctly",
+                input
+            );
         }
-        
+
         // Test attribute escaping
         let mut link = DomNode::new("a");
         link.add_attribute("href", "https://example.com?q=\"test\"&other=value");
         link.add_attribute("title", "Link with \"quotes\" & ampersands");
         link.add_text_child("Link");
-        
+
         let html = generator.generate_from_dom(&link).unwrap();
-        
+
         // Verify attribute values are properly escaped
         assert!(html.contains("href=\"https://example.com?q=&quot;test&quot;&amp;other=value\""));
         assert!(html.contains("title=\"Link with &quot;quotes&quot; &amp; ampersands\""));
@@ -1361,25 +1506,21 @@ mod commonmark_compliance_tests {
 
     #[test]
     fn test_xhtml_style_self_closing_tags() {
-        let config_xhtml = OutputConfigBuilder::new()
-            .with_xhtml_style(true)
-            .build();
-        
+        let config_xhtml = OutputConfigBuilder::new().with_xhtml_style(true).build();
+
         let generator_xhtml = HtmlGenerator::new(config_xhtml);
-        
+
         let hr = DomNode::new("hr");
         let html_xhtml = generator_xhtml.generate_from_dom(&hr).unwrap();
-        
+
         // Should use XHTML-style self-closing
         assert!(html_xhtml.contains("<hr />"));
-        
-        let config_html = OutputConfigBuilder::new()
-            .with_xhtml_style(false)
-            .build();
-        
+
+        let config_html = OutputConfigBuilder::new().with_xhtml_style(false).build();
+
         let generator_html = HtmlGenerator::new(config_html);
         let html_html = generator_html.generate_from_dom(&hr).unwrap();
-        
+
         // Should use HTML5-style void element
         assert!(html_html.contains("<hr>"));
         assert!(!html_html.contains("<hr />"));
@@ -1392,14 +1533,14 @@ mod commonmark_compliance_tests {
             .with_html5_compliance(true)
             .with_doctype("html")
             .build();
-        
+
         let generator = HtmlGenerator::new(config);
-        
+
         let mut content = DomNode::new("p");
         content.add_text_child("Hello World");
-        
+
         let html = generator.generate_from_dom(&content).unwrap();
-        
+
         // Should include DOCTYPE and document structure
         assert!(html.contains("<!DOCTYPE html>"));
         assert!(html.contains("<html lang=\"en\">"));
@@ -1417,54 +1558,56 @@ mod commonmark_compliance_tests {
         let config = OutputConfigBuilder::new()
             .with_html5_compliance(true)
             .build();
-        
+
         let generator = HtmlGenerator::new(config);
-        
+
         // Test CommonMark-specific HTML requirements
-        
+
         // 1. Code blocks should use pre > code structure
         let mut pre = DomNode::new("pre");
         let mut code = DomNode::new("code");
         code.add_attribute("class", "language-python");
         code.add_text_child("print('Hello')");
         pre.add_element_child(code);
-        
+
         let html = generator.generate_from_dom(&pre).unwrap();
-        assert!(html.contains("<pre><code class=\"language-python\">print(&#x27;Hello&#x27;)</code></pre>"));
-        
+        assert!(html.contains(
+            "<pre><code class=\"language-python\">print(&#x27;Hello&#x27;)</code></pre>"
+        ));
+
         // 2. Links should have proper href attributes
         let mut link = DomNode::new("a");
         link.add_attribute("href", "https://example.com");
         link.add_text_child("Example");
-        
+
         let html = generator.generate_from_dom(&link).unwrap();
         assert!(html.contains("<a href=\"https://example.com\">Example</a>"));
-        
+
         // 3. Images should have proper src and alt attributes
         let mut img = DomNode::new("img");
         img.add_attribute("src", "image.jpg");
         img.add_attribute("alt", "Description");
-        
+
         let html = generator.generate_from_dom(&img).unwrap();
-        
+
         // Check for the components separately since attribute order might vary
         assert!(html.contains("<img"));
         assert!(html.contains("src=\"image.jpg\""));
         assert!(html.contains("alt=\"Description\""));
         assert!(html.contains(">"));
         assert!(!html.contains("</img>")); // Should be void element
-        
+
         // 4. Emphasis should use em/strong tags
         let mut paragraph = DomNode::new("p");
         let mut em = DomNode::new("em");
         em.add_text_child("italic");
         let mut strong = DomNode::new("strong");
         strong.add_text_child("bold");
-        
+
         paragraph.add_element_child(em);
         paragraph.add_text_child(" and ");
         paragraph.add_element_child(strong);
-        
+
         let html = generator.generate_from_dom(&paragraph).unwrap();
         assert!(html.contains("<em>italic</em>"));
         assert!(html.contains("<strong>bold</strong>"));
@@ -1476,23 +1619,21 @@ mod commonmark_compliance_tests {
             .with_pretty_print(true)
             .with_indent_size(2)
             .build();
-        
+
         let mut writer = HtmlWriter::new(config);
-        
+
         // Test individual writer methods
         let mut attributes = HashMap::new();
         attributes.insert("class".to_string(), "test".to_string());
         attributes.insert("id".to_string(), "example".to_string());
-        
+
         writer.write_element("div", &attributes, "Content");
         writer.write_self_closing("br", &HashMap::new());
         writer.write_text("Plain text");
         writer.write_raw("<span>Raw HTML</span>");
-        
-        let output = writer.get_output();
-        
 
-        
+        let output = writer.get_output();
+
         // Verify all methods work correctly
         assert!(output.contains("<div"));
         assert!(output.contains("class=\"test\""));
@@ -1501,23 +1642,23 @@ mod commonmark_compliance_tests {
         assert!(output.contains("<br>"));
         assert!(output.contains("Plain text"));
         assert!(output.contains("<span>Raw HTML</span>"));
-        
+
         // Test indentation methods
         writer.clear();
         writer.indent();
         writer.write_text("Indented");
         writer.dedent();
         writer.write_text("Not indented");
-        
+
         let _indented_output = writer.get_output();
-        
+
         // The write_text method doesn't add indentation automatically - only write_indent does
         // Let's test the actual indentation behavior
         writer.clear();
         writer.indent();
         writer.write_indent();
         writer.write_text("Indented");
-        
+
         let properly_indented_output = writer.get_output();
         assert!(properly_indented_output.contains("  Indented")); // Should be indented
     }
