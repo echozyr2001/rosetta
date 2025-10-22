@@ -14,6 +14,51 @@ pub use codegen::{
 pub use dom::DomNode;
 pub use error::{MarkdownError, Result};
 pub use lexer::{Lexer, Position, Token};
+pub use parser::ParserConfig;
+
+// Public API configuration structs
+pub use config::{DomConfig, EngineConfig, GenerationConfig, LexerConfig, MarkdownEngine};
+
+// Advanced API exports
+pub use streaming::{ChunkResult, StreamingConfig, StreamingParser};
+// pub use extensions::{SyntaxExtension, ExtensionRegistry, ExtensionManager};
+
+// Configuration module for public API
+pub mod config;
+
+// Advanced API modules
+pub mod extensions;
+pub mod streaming;
+
+/// Simple function to parse Markdown text and return HTML.
+///
+/// This is the simplest entry point for the Markdown engine, providing
+/// a one-function interface for basic Markdown to HTML conversion.
+/// Uses default configuration for all components.
+///
+/// # Arguments
+///
+/// * `markdown` - The input Markdown text to convert
+///
+/// # Returns
+///
+/// Returns the generated HTML as a String
+///
+/// # Examples
+///
+/// ```
+/// use rosetta::parse_markdown;
+///
+/// let html = parse_markdown("# Hello, World!");
+/// assert!(html.contains("Hello, World!"));
+/// ```
+pub fn parse_markdown(markdown: &str) -> String {
+    let engine = config::MarkdownEngine::new();
+    engine.parse_to_html(markdown).unwrap_or_else(|_| {
+        // Fallback to empty content on error
+        String::new()
+    })
+}
 
 /// Converts a Markdown string to an HTML string.
 ///
@@ -70,7 +115,7 @@ pub fn to_html(markdown: &str) -> String {
 /// # Returns
 ///
 /// Returns the root Document of the AST
-pub fn parse_markdown(markdown: &str) -> Document {
+pub fn parse_to_ast(markdown: &str) -> Document {
     parser::parse(markdown).unwrap_or_else(|_| ast::Document {
         blocks: Vec::new(),
         source_map: ast::SourceMap::new(),
@@ -119,5 +164,20 @@ mod tests {
         let expected_html =
             "<div class=\"markdown-content\"><h1 class=\"heading\">Hello, World!</h1>\n</div>\n";
         assert_eq!(to_html(markdown), expected_html);
+    }
+
+    #[test]
+    fn test_parse_markdown_function() {
+        let markdown = "# Hello, World!";
+        let html = parse_markdown(markdown);
+        assert!(html.contains("Hello, World!"));
+    }
+
+    #[test]
+    fn test_parse_to_ast_function() {
+        let markdown = "# Hello, World!";
+        let document = parse_to_ast(markdown);
+        assert_eq!(document.blocks.len(), 1);
+        assert!(matches!(document.blocks[0], ast::Block::Heading { .. }));
     }
 }
