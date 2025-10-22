@@ -169,18 +169,18 @@ impl<'input> Parser<'input> {
         match self.parse_document() {
             Ok(document) => {
                 // Apply parallel processing optimizations if enabled
-                if let Some(ref optimizer) = self.performance_optimizer {
-                    if self.config.parallel_config.enabled && document.blocks.len() > 1 {
-                        let optimized_blocks =
-                            optimizer.parallel_processor.process_blocks_parallel(
-                                document.blocks,
-                                |block| Ok(block), // Identity function for now
-                            )?;
-                        return Ok(Document {
-                            blocks: optimized_blocks,
-                            source_map: document.source_map,
-                        });
-                    }
+                if let Some(ref optimizer) = self.performance_optimizer
+                    && self.config.parallel_config.enabled
+                    && document.blocks.len() > 1
+                {
+                    let optimized_blocks = optimizer.parallel_processor.process_blocks_parallel(
+                        document.blocks,
+                        Ok, // Identity function for now
+                    )?;
+                    return Ok(Document {
+                        blocks: optimized_blocks,
+                        source_map: document.source_map,
+                    });
                 }
                 Ok(document)
             }

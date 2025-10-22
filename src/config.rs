@@ -55,7 +55,7 @@ impl Default for DomConfig {
 }
 
 /// Configuration for HTML generation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct GenerationConfig {
     /// Output configuration for HTML generation
     pub output: OutputConfig,
@@ -63,16 +63,6 @@ pub struct GenerationConfig {
     pub source_maps: bool,
     /// Custom CSS classes for elements
     pub css_classes: HashMap<String, String>,
-}
-
-impl Default for GenerationConfig {
-    fn default() -> Self {
-        Self {
-            output: OutputConfig::default(),
-            source_maps: false,
-            css_classes: HashMap::new(),
-        }
-    }
 }
 
 /// Main configuration struct for the Markdown engine.

@@ -254,7 +254,7 @@ impl ParallelProcessor {
 
         // Process sections in parallel using thread pool
         let num_threads = self.config.num_threads.min(large_sections.len());
-        let chunk_size = (large_sections.len() + num_threads - 1) / num_threads;
+        let chunk_size = large_sections.len().div_ceil(num_threads);
 
         let mut handles = Vec::new();
         let processor = Arc::new(processor);
@@ -315,13 +315,15 @@ impl ParallelProcessor {
             current_section.push('\n');
 
             // Split on major section boundaries (headings) when not in code blocks
-            if !in_code_block && line.starts_with('#') && !current_section.trim().is_empty() {
-                if current_section.len() >= self.config.min_section_size {
-                    sections.push(current_section.trim().to_string());
-                    current_section.clear();
-                    current_section.push_str(line);
-                    current_section.push('\n');
-                }
+            if !in_code_block
+                && line.starts_with('#')
+                && !current_section.trim().is_empty()
+                && current_section.len() >= self.config.min_section_size
+            {
+                sections.push(current_section.trim().to_string());
+                current_section.clear();
+                current_section.push_str(line);
+                current_section.push('\n');
             }
         }
 
@@ -348,7 +350,7 @@ impl ParallelProcessor {
         }
 
         let num_threads = self.config.num_threads.min(blocks.len());
-        let chunk_size = (blocks.len() + num_threads - 1) / num_threads;
+        let chunk_size = blocks.len().div_ceil(num_threads);
 
         let mut handles = Vec::new();
         let processor = Arc::new(processor);
