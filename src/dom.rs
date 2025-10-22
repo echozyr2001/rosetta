@@ -207,10 +207,10 @@ impl DomNode {
         }
 
         for child in &self.children {
-            if let DomChild::Element(element) = child {
-                if let Some(found) = element.find_node(predicate) {
-                    return Some(found);
-                }
+            if let DomChild::Element(element) = child
+                && let Some(found) = element.find_node(predicate)
+            {
+                return Some(found);
             }
         }
 
@@ -323,13 +323,13 @@ impl DomNode {
         current_depth: usize,
         max_depth: Option<usize>,
     ) -> Result<(), String> {
-        if let Some(max) = max_depth {
-            if current_depth > max {
-                return Err(format!(
-                    "Maximum nesting depth {} exceeded at depth {}",
-                    max, current_depth
-                ));
-            }
+        if let Some(max) = max_depth
+            && current_depth > max
+        {
+            return Err(format!(
+                "Maximum nesting depth {} exceeded at depth {}",
+                max, current_depth
+            ));
         }
 
         for child in &self.children {
@@ -712,7 +712,7 @@ impl AttributeProcessor {
     pub fn add_element_attribute(&mut self, element_type: &str, key: &str, value: &str) {
         self.element_attributes
             .entry(element_type.to_string())
-            .or_insert_with(HashMap::new)
+            .or_default()
             .insert(key.to_string(), value.to_string());
     }
 }
@@ -777,7 +777,7 @@ impl ElementProcessor for AccessibilityProcessor {
                 "code" => {
                     let has_language_class = node
                         .get_attribute("class")
-                        .map_or(false, |c| c.contains("language-"));
+                        .is_some_and(|c| c.contains("language-"));
                     if has_language_class {
                         node.add_attribute("aria-label", "Code block");
                     }
@@ -1009,10 +1009,10 @@ impl DomTransformer {
                 }
 
                 // Add start attribute for ordered lists
-                if let ListKind::Ordered { start, .. } = kind {
-                    if *start != 1 {
-                        list.add_attribute("start", &start.to_string());
-                    }
+                if let ListKind::Ordered { start, .. } = kind
+                    && *start != 1
+                {
+                    list.add_attribute("start", &start.to_string());
                 }
 
                 self.add_position_attribute(&mut list, position)?;
@@ -1219,18 +1219,18 @@ impl DomTransformer {
         node: &mut DomNode,
         position: &Option<Position>,
     ) -> Result<(), crate::error::MarkdownError> {
-        if self.config.add_source_positions {
-            if let Some(pos) = position {
-                let namespace = if let Some(ns) = &self.config.data_attribute_namespace {
-                    format!("data-{}-", ns)
-                } else {
-                    "data-".to_string()
-                };
+        if self.config.add_source_positions
+            && let Some(pos) = position
+        {
+            let namespace = if let Some(ns) = &self.config.data_attribute_namespace {
+                format!("data-{}-", ns)
+            } else {
+                "data-".to_string()
+            };
 
-                node.add_attribute(&format!("{}line", namespace), &pos.line.to_string());
-                node.add_attribute(&format!("{}column", namespace), &pos.column.to_string());
-                node.add_attribute(&format!("{}offset", namespace), &pos.offset.to_string());
-            }
+            node.add_attribute(&format!("{}line", namespace), &pos.line.to_string());
+            node.add_attribute(&format!("{}column", namespace), &pos.column.to_string());
+            node.add_attribute(&format!("{}offset", namespace), &pos.offset.to_string());
         }
         Ok(())
     }
