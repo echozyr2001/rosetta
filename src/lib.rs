@@ -5,6 +5,7 @@ pub mod dom;
 pub mod error;
 pub mod lexer;
 pub mod parser;
+pub mod performance;
 
 // Re-export key types for public API
 pub use ast::{Block, Document, Inline, Node, Visitable, Visitor};
@@ -15,6 +16,7 @@ pub use dom::DomNode;
 pub use error::{MarkdownError, Result};
 pub use lexer::{Lexer, Position, Token};
 pub use parser::ParserConfig;
+pub use performance::{ParallelConfig, PerformanceOptimizer, ZeroCopyStr};
 
 // Public API configuration structs
 pub use config::{DomConfig, EngineConfig, GenerationConfig, LexerConfig, MarkdownEngine};

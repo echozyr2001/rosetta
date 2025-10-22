@@ -8,6 +8,7 @@ use crate::dom::DomNode;
 use crate::error::{MarkdownError, Result};
 // use crate::extensions::ExtensionManager;
 use crate::parser::ParserConfig;
+use crate::performance::{ParallelConfig, PerformanceOptimizer};
 use crate::streaming::{StreamingConfig, StringStreamingParser};
 use std::collections::HashMap;
 
@@ -171,6 +172,12 @@ impl EngineConfigBuilder {
         self
     }
 
+    /// Sets the parallel processing configuration.
+    pub fn parallel_config(mut self, config: ParallelConfig) -> Self {
+        self.config.parser.parallel_config = config;
+        self
+    }
+
     /// Sets the extension manager.
     // pub fn extension_manager(mut self, manager: ExtensionManager) -> Self {
     //     self.config.extension_manager = manager;
@@ -246,22 +253,44 @@ impl EngineConfigBuilder {
 /// );
 /// let html = engine.parse_to_html("# Hello, World!");
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct MarkdownEngine {
     config: EngineConfig,
+    performance_optimizer: Option<PerformanceOptimizer>,
 }
 
 impl MarkdownEngine {
     /// Creates a new Markdown engine with default configuration.
     pub fn new() -> Self {
+        let config = EngineConfig::default();
+        let performance_optimizer = if config.performance_optimized {
+            Some(PerformanceOptimizer::new(
+                config.parser.parallel_config.clone(),
+            ))
+        } else {
+            None
+        };
+
         Self {
-            config: EngineConfig::default(),
+            config,
+            performance_optimizer,
         }
     }
 
     /// Creates a new Markdown engine with custom configuration.
     pub fn with_config(config: EngineConfig) -> Self {
-        Self { config }
+        let performance_optimizer = if config.performance_optimized {
+            Some(PerformanceOptimizer::new(
+                config.parser.parallel_config.clone(),
+            ))
+        } else {
+            None
+        };
+
+        Self {
+            config,
+            performance_optimizer,
+        }
     }
 
     /// Creates a builder for configuring the engine.
@@ -297,21 +326,30 @@ impl MarkdownEngine {
     /// ```
     pub fn parse_to_html(&self, markdown: &str) -> Result<String> {
         // Validate input size if configured
-        if let Some(max_size) = self.config.lexer.max_input_size {
-            if markdown.len() > max_size {
-                return Err(MarkdownError::parse_error(
-                    crate::lexer::Position::default(),
-                    format!(
-                        "Input size {} exceeds maximum allowed size {}",
-                        markdown.len(),
-                        max_size
-                    ),
-                ));
-            }
+        if let Some(max_size) = self.config.lexer.max_input_size
+            && markdown.len() > max_size
+        {
+            return Err(MarkdownError::parse_error(
+                crate::lexer::Position::default(),
+                format!(
+                    "Input size {} exceeds maximum allowed size {}",
+                    markdown.len(),
+                    max_size
+                ),
+            ));
         }
 
-        // Parse to AST
-        let document = self.parse_to_ast(markdown)?;
+        // Choose parsing strategy based on configuration
+        let document = if self.config.performance_optimized && markdown.len() > 10000 {
+            // Use optimized parsing for large documents
+            self.parse_optimized(markdown)?
+        } else if self.config.streaming && markdown.len() > 100000 {
+            // Use streaming for very large documents
+            self.parse_streaming(markdown)?
+        } else {
+            // Standard parsing for smaller documents
+            self.parse_to_ast(markdown)?
+        };
 
         // Convert to DOM if needed for advanced processing
         if self.config.dom.preserve_positions || !self.config.dom.global_attributes.is_empty() {
@@ -456,6 +494,26 @@ impl MarkdownEngine {
         parser.parse_complete()
     }
 
+    /// Parses Markdown with performance optimizations enabled.
+    ///
+    /// This method uses parallel processing and memory pooling for optimal performance
+    /// on large documents with independent sections.
+    ///
+    /// # Arguments
+    ///
+    /// * `markdown` - The input Markdown text to parse
+    ///
+    /// # Returns
+    ///
+    /// Returns the parsed Document, or an error if parsing fails.
+    pub fn parse_optimized(&self, markdown: &str) -> Result<Document> {
+        if let Some(ref optimizer) = self.performance_optimizer {
+            optimizer.optimize_document_processing(markdown, |content| self.parse_to_ast(content))
+        } else {
+            self.parse_to_ast(markdown)
+        }
+    }
+
     /// Returns a reference to the extension manager.
     // pub fn extension_manager(&self) -> &ExtensionManager {
     //     &self.config.extension_manager
@@ -494,6 +552,16 @@ impl MarkdownEngine {
         let html = self.dom_to_html(dom.clone())?;
 
         Ok((document, dom, html))
+    }
+
+    /// Get performance statistics for the engine.
+    ///
+    /// Returns statistics about memory pool usage and parallel processing
+    /// if performance optimizations are enabled.
+    pub fn performance_stats(&self) -> Option<crate::performance::PoolStats> {
+        self.performance_optimizer
+            .as_ref()
+            .map(|opt| opt.pool_stats())
     }
 
     /// Helper method to apply global attributes to DOM nodes recursively.

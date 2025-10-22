@@ -3,6 +3,7 @@ use crate::error::{
     DefaultErrorHandler, ErrorHandler, ErrorInfo, ErrorSeverity, MarkdownError, Result,
 };
 use crate::lexer::{Lexer, Position, Token};
+use crate::performance::{ParallelConfig, PerformanceOptimizer};
 
 /// Configuration for the parser behavior and options
 #[derive(Debug, Clone)]
@@ -17,6 +18,10 @@ pub struct ParserConfig {
     pub track_source_positions: bool,
     /// Maximum number of errors before stopping parsing
     pub max_errors: Option<usize>,
+    /// Whether to enable performance optimizations
+    pub performance_optimized: bool,
+    /// Parallel processing configuration
+    pub parallel_config: ParallelConfig,
 }
 
 impl Default for ParserConfig {
@@ -27,6 +32,8 @@ impl Default for ParserConfig {
             enable_gfm_extensions: false,
             track_source_positions: true,
             max_errors: Some(100),
+            performance_optimized: true,
+            parallel_config: ParallelConfig::default(),
         }
     }
 }
@@ -56,6 +63,8 @@ pub struct Parser<'input> {
     state: ParserState,
     /// Error handler for collecting and managing errors
     error_handler: Box<dyn ErrorHandler>,
+    /// Performance optimizer for memory pooling and parallel processing
+    performance_optimizer: Option<PerformanceOptimizer>,
 }
 
 impl<'input> Parser<'input> {
@@ -70,12 +79,19 @@ impl<'input> Parser<'input> {
             Box::new(DefaultErrorHandler::new())
         };
 
+        let performance_optimizer = if config.performance_optimized {
+            Some(PerformanceOptimizer::new(config.parallel_config.clone()))
+        } else {
+            None
+        };
+
         Self {
             lexer,
             current_token,
             config,
             state: ParserState::default(),
             error_handler,
+            performance_optimizer,
         }
     }
 
@@ -93,12 +109,19 @@ impl<'input> Parser<'input> {
         let mut lexer = Lexer::new(input);
         let current_token = lexer.next_token().ok();
 
+        let performance_optimizer = if config.performance_optimized {
+            Some(PerformanceOptimizer::new(config.parallel_config.clone()))
+        } else {
+            None
+        };
+
         Self {
             lexer,
             current_token,
             config,
             state: ParserState::default(),
             error_handler,
+            performance_optimizer,
         }
     }
 
@@ -115,6 +138,13 @@ impl<'input> Parser<'input> {
     /// Returns a reference to the collected reference definitions
     pub fn reference_map(&self) -> &ReferenceMap {
         &self.state.reference_map
+    }
+
+    /// Returns performance statistics if optimization is enabled
+    pub fn performance_stats(&self) -> Option<crate::performance::PoolStats> {
+        self.performance_optimizer
+            .as_ref()
+            .map(|opt| opt.pool_stats())
     }
 
     /// Add a link reference definition to the parser state
@@ -138,8 +168,20 @@ impl<'input> Parser<'input> {
 
         match self.parse_document() {
             Ok(document) => {
-                // For now, we'll skip the fatal error check since it requires complex downcasting
-                // This will be improved in future iterations
+                // Apply parallel processing optimizations if enabled
+                if let Some(ref optimizer) = self.performance_optimizer {
+                    if self.config.parallel_config.enabled && document.blocks.len() > 1 {
+                        let optimized_blocks =
+                            optimizer.parallel_processor.process_blocks_parallel(
+                                document.blocks,
+                                |block| Ok(block), // Identity function for now
+                            )?;
+                        return Ok(Document {
+                            blocks: optimized_blocks,
+                            source_map: document.source_map,
+                        });
+                    }
+                }
                 Ok(document)
             }
             Err(error) => {
@@ -1133,12 +1175,21 @@ impl<'input> Parser<'input> {
         // In a full implementation, this would properly clone the lexer state
         let new_lexer = Lexer::new("");
 
+        let performance_optimizer = if self.config.performance_optimized {
+            Some(PerformanceOptimizer::new(
+                self.config.parallel_config.clone(),
+            ))
+        } else {
+            None
+        };
+
         Parser {
             lexer: new_lexer,
             current_token: self.current_token.clone(),
             config: self.config.clone(),
             state: self.state.clone(),
             error_handler: Box::new(crate::error::DefaultErrorHandler::new()),
+            performance_optimizer,
         }
     }
 
@@ -1287,6 +1338,8 @@ mod tests {
             enable_gfm_extensions: true,
             track_source_positions: false,
             max_errors: Some(50),
+            performance_optimized: true,
+            parallel_config: crate::performance::ParallelConfig::default(),
         };
 
         let parser = Parser::new(input, config.clone());

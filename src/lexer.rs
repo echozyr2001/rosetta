@@ -3,6 +3,7 @@
 /// This module provides the `Lexer` struct and related types for breaking down
 /// Markdown text into a stream of tokens that can be consumed by the parser.
 use crate::error::Result;
+
 use unicode_segmentation::{GraphemeIndices, UnicodeSegmentation};
 
 /// Represents the position of a token in the source text.
