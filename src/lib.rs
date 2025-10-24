@@ -240,10 +240,10 @@ fn hello() {
 > A blockquote with some content.
 "#;
         let html = parse_markdown(complex_markdown);
-        assert!(html.contains("MainTitle") || html.contains("Main Title"));
+        assert!(html.contains("Main Title"));
         assert!(html.contains("Subsection"));
-        assert!(html.contains("Firstitem") || html.contains("First item"));
-        assert!(html.contains("println!") || html.contains("Hello"));
+        assert!(html.contains("First item"));
+        assert!(html.contains("println!"));
         assert!(html.contains("blockquote"));
     }
 

@@ -1254,11 +1254,13 @@ impl<'input> Parser<'input> {
                 && colon_text.starts_with(':')
             {
                 self.advance()?; // consume ":"
+                self.skip_whitespace_text_tokens()?;
 
                 // Parse destination
                 if let Some(Token::Text(dest_text)) = &self.current_token {
                     let destination = dest_text.trim_matches(|c| c == '<' || c == '>').to_string();
                     self.advance()?; // consume destination
+                    self.skip_whitespace_text_tokens()?;
 
                     // Parse optional title
                     let mut title = None;
@@ -1284,7 +1286,7 @@ impl<'input> Parser<'input> {
                                 self.advance()?;
                             }
 
-                            let full_title = title_parts.join(" ");
+                            let full_title = title_parts.concat();
                             if full_title.starts_with('"') && full_title.ends_with('"') {
                                 title = Some(full_title[1..full_title.len() - 1].to_string());
                             }
@@ -1299,6 +1301,18 @@ impl<'input> Parser<'input> {
         }
 
         Ok(false)
+    }
+
+    /// Advances past any whitespace-only text tokens produced by the lexer.
+    fn skip_whitespace_text_tokens(&mut self) -> Result<()> {
+        while let Some(Token::Text(text)) = &self.current_token {
+            if text.chars().all(|c| c.is_whitespace()) {
+                self.advance()?;
+            } else {
+                break;
+            }
+        }
+        Ok(())
     }
 }
 
