@@ -228,13 +228,11 @@ impl<'input> Lexer<'input> {
             && self.char_stream.current_is_whitespace()
             && !self.char_stream.current_is('\n')
         {
-            // Handle indentation at start of line
             if self.is_at_line_start() {
                 return self.tokenize_indent();
-            } else {
-                // Skip whitespace in middle of line
-                self.skip_whitespace_except_newline();
             }
+
+            return self.tokenize_text();
         }
 
         if self.char_stream.is_at_end() {
@@ -598,6 +596,7 @@ impl<'input> Lexer<'input> {
 
     /// Tokenizes code blocks (```).
     fn tokenize_code_block(&mut self) -> Result<Token<'input>> {
+        let start_offset = self.char_stream.current_offset().unwrap_or(0);
         let mut fence_count = 0;
 
         // Count opening fence
@@ -637,6 +636,7 @@ impl<'input> Lexer<'input> {
             .current_offset()
             .unwrap_or(self.char_stream.input.len());
         let mut content_end = content_start;
+        let mut found_closing_fence = false;
 
         // Find closing fence
         while !self.char_stream.is_at_end() {
@@ -652,11 +652,18 @@ impl<'input> Lexer<'input> {
                 if closing_count >= fence_count {
                     // Found closing fence
                     content_end = fence_start;
+                    found_closing_fence = true;
                     break;
                 }
             } else {
                 self.advance();
             }
+        }
+
+        if !found_closing_fence {
+            // Unterminated fence sequence should be treated as plain text to avoid data loss
+            let text = self.char_stream.slice_from(start_offset);
+            return Ok(Token::Text(text));
         }
 
         let content = &self.char_stream.input[content_start..content_end];
@@ -702,23 +709,23 @@ impl<'input> Lexer<'input> {
             let marker = self.char_stream.current().unwrap().chars().next().unwrap();
 
             // Check if the character after the marker is a space or tab
-            let next_offset = current_offset + 1;
-            if next_offset < self.char_stream.input.len() {
-                let next_char = &self.char_stream.input[next_offset..next_offset + 1];
-                if next_char == " " || next_char == "\t" {
+            match self.peek_char() {
+                Some(' ') | Some('\t') => {
                     self.advance(); // Consume the marker
                     return Ok(Some(Token::ListMarker {
                         kind: ListKind::Bullet { marker },
                         indent: indent_level,
                     }));
                 }
-            } else {
-                // End of input after marker is also valid
-                self.advance();
-                return Ok(Some(Token::ListMarker {
-                    kind: ListKind::Bullet { marker },
-                    indent: indent_level,
-                }));
+                None => {
+                    // End of input after marker is also valid
+                    self.advance();
+                    return Ok(Some(Token::ListMarker {
+                        kind: ListKind::Bullet { marker },
+                        indent: indent_level,
+                    }));
+                }
+                _ => {}
             }
         }
 
@@ -771,12 +778,15 @@ impl<'input> Lexer<'input> {
     /// Finds the start of the current line.
     fn find_line_start(&self, current_offset: usize) -> usize {
         let input = self.char_stream.input;
-        for i in (0..current_offset).rev() {
-            if input.chars().nth(i) == Some('\n') {
-                return i + 1;
-            }
+        if current_offset > input.len() {
+            return input.len();
         }
-        0
+
+        let slice = &input[..current_offset];
+        slice
+            .rfind('\n')
+            .map(|idx| idx + '\n'.len_utf8())
+            .unwrap_or(0)
     }
 
     /// Checks if current character is an emphasis marker.
@@ -1056,17 +1066,6 @@ impl<'input> Lexer<'input> {
 
         // Consume characters until we hit a special character or whitespace
         while !self.char_stream.is_at_end() {
-            // Handle escape sequences first
-            if self.char_stream.current_is('\\') {
-                // Process escape sequence
-                self.advance(); // consume backslash
-                if !self.char_stream.is_at_end() {
-                    // Consume the escaped character
-                    self.advance();
-                }
-                continue;
-            }
-
             // Check if current character is a special Markdown character that should end text
             if self.is_text_boundary_character() {
                 break;
@@ -1097,10 +1096,12 @@ impl<'input> Lexer<'input> {
     /// This implements proper text boundary detection for CommonMark compliance.
     fn is_text_boundary_character(&self) -> bool {
         // Structural characters that always end text
-        if self.char_stream.current_is('\n')
-            || self.char_stream.current_is(' ')
-            || self.char_stream.current_is('\t')
-        {
+        if self.char_stream.current_is('\n') {
+            return true;
+        }
+
+        // Treat intra-line whitespace as its own boundary so spaces are preserved
+        if self.char_stream.current_is_whitespace() && !self.char_stream.current_is('\n') {
             return true;
         }
 
@@ -1171,8 +1172,9 @@ impl<'input> Lexer<'input> {
         }
 
         // Look back to see if previous character was whitespace (but not newline)
-        let prev_char = &self.char_stream.input[current_offset - 1..current_offset];
-        prev_char == " " || prev_char == "\t"
+        let input = self.char_stream.input;
+        let prev_char = input[..current_offset].chars().next_back();
+        matches!(prev_char, Some(' ') | Some('\t'))
     }
 
     /// Process escape sequences in text according to CommonMark specification.
@@ -1253,6 +1255,16 @@ impl<'input> Lexer<'input> {
 mod tests {
     use super::*;
 
+    fn next_non_whitespace_token<'input>(lexer: &mut Lexer<'input>) -> Token<'input> {
+        loop {
+            let token = lexer.next_token().unwrap();
+            match token {
+                Token::Text(text) if text.chars().all(|c| c.is_whitespace()) => continue,
+                other => return other,
+            }
+        }
+    }
+
     #[test]
     fn test_lexer_creation() {
         let input = "Hello, World!";
@@ -1324,14 +1336,20 @@ mod tests {
         let input = "Hello World";
         let mut lexer = Lexer::new(input);
 
-        let token1 = lexer.next_token().unwrap();
-        assert!(matches!(token1, Token::Text("Hello")));
+        let mut tokens = Vec::new();
 
-        let token2 = lexer.next_token().unwrap();
-        assert!(matches!(token2, Token::Text("World")));
+        loop {
+            let token = lexer.next_token().unwrap();
+            if matches!(token, Token::Eof) {
+                break;
+            }
+            tokens.push(token);
+        }
 
-        let token3 = lexer.next_token().unwrap();
-        assert!(matches!(token3, Token::Eof));
+        assert_eq!(
+            tokens,
+            vec![Token::Text("Hello"), Token::Text(" "), Token::Text("World")]
+        );
     }
 
     #[test]
@@ -1425,11 +1443,25 @@ mod tests {
         }
 
         let token4 = lexer2.next_token().unwrap();
-        if let Token::Emphasis { marker, count } = token4 {
+        assert!(matches!(token4, Token::Text(" ")));
+
+        let token5 = lexer2.next_token().unwrap();
+        if let Token::Emphasis { marker, count } = token5 {
             assert_eq!(marker, '*');
             assert_eq!(count, 2);
         } else {
-            panic!("Expected Emphasis token, got {:?}", token4);
+            panic!("Expected Emphasis token, got {:?}", token5);
+        }
+
+        let token6 = lexer2.next_token().unwrap();
+        assert!(matches!(token6, Token::Text("strong")));
+
+        let token7 = lexer2.next_token().unwrap();
+        if let Token::Emphasis { marker, count } = token7 {
+            assert_eq!(marker, '*');
+            assert_eq!(count, 2);
+        } else {
+            panic!("Expected Emphasis token, got {:?}", token7);
         }
     }
 
@@ -1438,22 +1470,26 @@ mod tests {
         let input = "`code` and `more code`";
         let mut lexer = Lexer::new(input);
 
-        let token1 = lexer.next_token().unwrap();
-        if let Token::CodeSpan(content) = token1 {
-            assert_eq!(content, "code");
-        } else {
-            panic!("Expected CodeSpan token, got {:?}", token1);
+        let mut tokens = Vec::new();
+
+        loop {
+            let token = lexer.next_token().unwrap();
+            if matches!(token, Token::Eof) {
+                break;
+            }
+            tokens.push(token);
         }
 
-        let token2 = lexer.next_token().unwrap();
-        assert!(matches!(token2, Token::Text("and")));
-
-        let token3 = lexer.next_token().unwrap();
-        if let Token::CodeSpan(content) = token3 {
-            assert_eq!(content, "more code");
-        } else {
-            panic!("Expected CodeSpan token, got {:?}", token3);
-        }
+        assert_eq!(
+            tokens,
+            vec![
+                Token::CodeSpan("code"),
+                Token::Text(" "),
+                Token::Text("and"),
+                Token::Text(" "),
+                Token::CodeSpan("more code")
+            ]
+        );
     }
 
     #[test]
@@ -1472,9 +1508,18 @@ mod tests {
             panic!("Expected ListMarker token, got {:?}", token1);
         }
 
-        // Skip to next line
-        lexer.next_token().unwrap(); // "item"
-        lexer.next_token().unwrap(); // Newline
+        // Collect text tokens for the list item line
+        let mut item_tokens = Vec::new();
+        loop {
+            let token = lexer.next_token().unwrap();
+            match token {
+                Token::Text(text) => item_tokens.push(text),
+                Token::Newline => break,
+                other => panic!("Expected text or newline, got {:?}", other),
+            }
+        }
+
+        assert_eq!(item_tokens.concat(), " item");
 
         let token4 = lexer.next_token().unwrap();
         if let Token::ListMarker { kind, .. } = token4 {
@@ -1509,17 +1554,18 @@ mod tests {
         let input = "Hello 🌍 World 👋";
         let mut lexer = Lexer::new(input);
 
-        let token1 = lexer.next_token().unwrap();
-        assert!(matches!(token1, Token::Text("Hello")));
+        let mut tokens = Vec::new();
 
-        let token2 = lexer.next_token().unwrap();
-        assert!(matches!(token2, Token::Text("🌍")));
+        loop {
+            let token = lexer.next_token().unwrap();
+            match token {
+                Token::Text(text) => tokens.push(text),
+                Token::Eof => break,
+                other => panic!("Expected Text token, got {:?}", other),
+            }
+        }
 
-        let token3 = lexer.next_token().unwrap();
-        assert!(matches!(token3, Token::Text("World")));
-
-        let token4 = lexer.next_token().unwrap();
-        assert!(matches!(token4, Token::Text("👋")));
+        assert_eq!(tokens, vec!["Hello", " ", "🌍", " ", "World", " ", "👋"]);
     }
 
     #[test]
@@ -1581,10 +1627,22 @@ mod tests {
             panic!("Expected ListMarker token, got {:?}", token1);
         }
 
-        // Skip to nested bullet
-        lexer.next_token().unwrap(); // "bullet"
-        lexer.next_token().unwrap(); // Newline
-        lexer.next_token().unwrap(); // Indent
+        // Collect text tokens for the first bullet and consume newline
+        let mut first_item_tokens = Vec::new();
+        loop {
+            let token = lexer.next_token().unwrap();
+            match token {
+                Token::Text(text) => first_item_tokens.push(text),
+                Token::Newline => break,
+                other => panic!("Expected text or newline, got {:?}", other),
+            }
+        }
+
+        assert_eq!(first_item_tokens.concat(), " bullet");
+
+        // Indentation before nested bullet should be preserved
+        let indent_token = lexer.next_token().unwrap();
+        assert!(matches!(indent_token, Token::Indent(2)));
 
         let token2 = lexer.next_token().unwrap();
         if let Token::ListMarker { kind, indent } = token2 {
@@ -1607,11 +1665,17 @@ mod tests {
         let token1 = lexer.next_token().unwrap();
         assert!(matches!(token1, Token::BlockQuote));
 
-        let token2 = lexer.next_token().unwrap();
-        assert!(matches!(token2, Token::Text("This")));
+        let mut line_tokens = Vec::new();
+        loop {
+            let token = lexer.next_token().unwrap();
+            match token {
+                Token::Text(text) => line_tokens.push(text),
+                Token::Newline => break,
+                other => panic!("Expected text or newline, got {:?}", other),
+            }
+        }
 
-        // Skip to next line
-        while !matches!(lexer.next_token().unwrap(), Token::Newline) {}
+        assert_eq!(line_tokens.concat(), " This is a blockquote");
 
         let token3 = lexer.next_token().unwrap();
         assert!(matches!(token3, Token::BlockQuote));
@@ -1642,7 +1706,7 @@ mod tests {
         let mut lexer = Lexer::new(input);
 
         // *single*
-        let token1 = lexer.next_token().unwrap();
+        let token1 = next_non_whitespace_token(&mut lexer);
         if let Token::Emphasis { marker, count } = token1 {
             assert_eq!(marker, '*');
             assert_eq!(count, 1);
@@ -1650,10 +1714,10 @@ mod tests {
             panic!("Expected Emphasis token, got {:?}", token1);
         }
 
-        let token2 = lexer.next_token().unwrap();
+        let token2 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token2, Token::Text("single")));
 
-        let token3 = lexer.next_token().unwrap();
+        let token3 = next_non_whitespace_token(&mut lexer);
         if let Token::Emphasis { marker, count } = token3 {
             assert_eq!(marker, '*');
             assert_eq!(count, 1);
@@ -1662,7 +1726,7 @@ mod tests {
         }
 
         // **double**
-        let token4 = lexer.next_token().unwrap();
+        let token4 = next_non_whitespace_token(&mut lexer);
         if let Token::Emphasis { marker, count } = token4 {
             assert_eq!(marker, '*');
             assert_eq!(count, 2);
@@ -1670,10 +1734,10 @@ mod tests {
             panic!("Expected Emphasis token, got {:?}", token4);
         }
 
-        let token5 = lexer.next_token().unwrap();
+        let token5 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token5, Token::Text("double")));
 
-        let token6 = lexer.next_token().unwrap();
+        let token6 = next_non_whitespace_token(&mut lexer);
         if let Token::Emphasis { marker, count } = token6 {
             assert_eq!(marker, '*');
             assert_eq!(count, 2);
@@ -1682,7 +1746,7 @@ mod tests {
         }
 
         // ***triple***
-        let token7 = lexer.next_token().unwrap();
+        let token7 = next_non_whitespace_token(&mut lexer);
         if let Token::Emphasis { marker, count } = token7 {
             assert_eq!(marker, '*');
             assert_eq!(count, 3);
@@ -1697,7 +1761,7 @@ mod tests {
         let mut lexer = Lexer::new(input);
 
         // `simple`
-        let token1 = lexer.next_token().unwrap();
+        let token1 = next_non_whitespace_token(&mut lexer);
         if let Token::CodeSpan(content) = token1 {
             assert_eq!(content, "simple");
         } else {
@@ -1705,7 +1769,7 @@ mod tests {
         }
 
         // ``with backticks ` inside``
-        let token2 = lexer.next_token().unwrap();
+        let token2 = next_non_whitespace_token(&mut lexer);
         if let Token::CodeSpan(content) = token2 {
             assert_eq!(content, "with backticks ` inside");
         } else {
@@ -1713,7 +1777,7 @@ mod tests {
         }
 
         // ` spaced ` (should trim spaces)
-        let token3 = lexer.next_token().unwrap();
+        let token3 = next_non_whitespace_token(&mut lexer);
         if let Token::CodeSpan(content) = token3 {
             assert_eq!(content, "spaced");
         } else {
@@ -1728,7 +1792,7 @@ mod tests {
         let mut lexer = Lexer::new(input);
 
         // [simple link](http://example.com)
-        let token1 = lexer.next_token().unwrap();
+        let token1 = next_non_whitespace_token(&mut lexer);
         if let Token::Link { text, dest, title } = token1 {
             assert_eq!(text, "simple link");
             assert_eq!(dest, "http://example.com");
@@ -1738,7 +1802,7 @@ mod tests {
         }
 
         // [link with title](http://example.com "Title")
-        let token2 = lexer.next_token().unwrap();
+        let token2 = next_non_whitespace_token(&mut lexer);
         if let Token::Link { text, dest, title } = token2 {
             assert_eq!(text, "link with title");
             assert_eq!(dest, "http://example.com");
@@ -1754,7 +1818,7 @@ mod tests {
         let mut lexer = Lexer::new(input);
 
         // ![alt text](image.jpg)
-        let token1 = lexer.next_token().unwrap();
+        let token1 = next_non_whitespace_token(&mut lexer);
         if let Token::Image { alt, dest, title } = token1 {
             assert_eq!(alt, "alt text");
             assert_eq!(dest, "image.jpg");
@@ -1764,7 +1828,7 @@ mod tests {
         }
 
         // ![with title](image.jpg "Image Title")
-        let token2 = lexer.next_token().unwrap();
+        let token2 = next_non_whitespace_token(&mut lexer);
         if let Token::Image { alt, dest, title } = token2 {
             assert_eq!(alt, "with title");
             assert_eq!(dest, "image.jpg");
@@ -1779,17 +1843,21 @@ mod tests {
         let input = "regular text with spaces";
         let mut lexer = Lexer::new(input);
 
-        let token1 = lexer.next_token().unwrap();
-        assert!(matches!(token1, Token::Text("regular")));
+        let mut tokens = Vec::new();
 
-        let token2 = lexer.next_token().unwrap();
-        assert!(matches!(token2, Token::Text("text")));
+        loop {
+            let token = lexer.next_token().unwrap();
+            match token {
+                Token::Text(text) => tokens.push(text),
+                Token::Eof => break,
+                other => panic!("Expected Text token, got {:?}", other),
+            }
+        }
 
-        let token3 = lexer.next_token().unwrap();
-        assert!(matches!(token3, Token::Text("with")));
-
-        let token4 = lexer.next_token().unwrap();
-        assert!(matches!(token4, Token::Text("spaces")));
+        assert_eq!(
+            tokens,
+            vec!["regular", " ", "text", " ", "with", " ", "spaces"]
+        );
     }
 
     // Additional tests for task 2.5: Unicode handling, position tracking, and CommonMark compliance
@@ -1799,23 +1867,33 @@ mod tests {
         let input = "Hello 👨‍👩‍👧‍👦 family emoji 🏳️‍🌈 flag";
         let mut lexer = Lexer::new(input);
 
-        let token1 = lexer.next_token().unwrap();
-        assert!(matches!(token1, Token::Text("Hello")));
+        let mut tokens = Vec::new();
 
-        let token2 = lexer.next_token().unwrap();
-        assert!(matches!(token2, Token::Text("👨‍👩‍👧‍👦")));
+        loop {
+            let token = lexer.next_token().unwrap();
+            match token {
+                Token::Text(text) => tokens.push(text),
+                Token::Eof => break,
+                other => panic!("Expected Text token, got {:?}", other),
+            }
+        }
 
-        let token3 = lexer.next_token().unwrap();
-        assert!(matches!(token3, Token::Text("family")));
-
-        let token4 = lexer.next_token().unwrap();
-        assert!(matches!(token4, Token::Text("emoji")));
-
-        let token5 = lexer.next_token().unwrap();
-        assert!(matches!(token5, Token::Text("🏳️‍🌈")));
-
-        let token6 = lexer.next_token().unwrap();
-        assert!(matches!(token6, Token::Text("flag")));
+        assert_eq!(
+            tokens,
+            vec![
+                "Hello",
+                " ",
+                "👨‍👩‍👧‍👦",
+                " ",
+                "family",
+                " ",
+                "emoji",
+                " ",
+                "🏳️‍🌈",
+                " ",
+                "flag"
+            ]
+        );
     }
 
     #[test]
@@ -1823,20 +1901,31 @@ mod tests {
         let input = "Héllo Wörld 中文 العربية русский";
         let mut lexer = Lexer::new(input);
 
-        let token1 = lexer.next_token().unwrap();
-        assert!(matches!(token1, Token::Text("Héllo")));
+        let mut tokens = Vec::new();
 
-        let token2 = lexer.next_token().unwrap();
-        assert!(matches!(token2, Token::Text("Wörld")));
+        loop {
+            let token = lexer.next_token().unwrap();
+            match token {
+                Token::Text(text) => tokens.push(text),
+                Token::Eof => break,
+                other => panic!("Expected Text token, got {:?}", other),
+            }
+        }
 
-        let token3 = lexer.next_token().unwrap();
-        assert!(matches!(token3, Token::Text("中文")));
-
-        let token4 = lexer.next_token().unwrap();
-        assert!(matches!(token4, Token::Text("العربية")));
-
-        let token5 = lexer.next_token().unwrap();
-        assert!(matches!(token5, Token::Text("русский")));
+        assert_eq!(
+            tokens,
+            vec![
+                "Héllo",
+                " ",
+                "Wörld",
+                " ",
+                "中文",
+                " ",
+                "العربية",
+                " ",
+                "русский"
+            ]
+        );
     }
 
     #[test]
@@ -1844,14 +1933,18 @@ mod tests {
         let input = "café naïve résumé";
         let mut lexer = Lexer::new(input);
 
-        let token1 = lexer.next_token().unwrap();
-        assert!(matches!(token1, Token::Text("café")));
+        let mut tokens = Vec::new();
 
-        let token2 = lexer.next_token().unwrap();
-        assert!(matches!(token2, Token::Text("naïve")));
+        loop {
+            let token = lexer.next_token().unwrap();
+            match token {
+                Token::Text(text) => tokens.push(text),
+                Token::Eof => break,
+                other => panic!("Expected Text token, got {:?}", other),
+            }
+        }
 
-        let token3 = lexer.next_token().unwrap();
-        assert!(matches!(token3, Token::Text("résumé")));
+        assert_eq!(tokens, vec!["café", " ", "naïve", " ", "résumé"]);
     }
 
     #[test]
@@ -1948,10 +2041,16 @@ mod tests {
 
         // List item text
         let token3 = lexer.next_token().unwrap();
-        assert!(matches!(token3, Token::Text("List")));
+        assert!(matches!(token3, Token::Text(" ")));
 
         let token4 = lexer.next_token().unwrap();
-        assert!(matches!(token4, Token::Text("item")));
+        assert!(matches!(token4, Token::Text("List")));
+
+        let token5 = lexer.next_token().unwrap();
+        assert!(matches!(token5, Token::Text(" ")));
+
+        let token6 = lexer.next_token().unwrap();
+        assert!(matches!(token6, Token::Text("item")));
     }
 
     #[test]
