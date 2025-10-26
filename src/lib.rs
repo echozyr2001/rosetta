@@ -191,7 +191,10 @@ mod tests {
     fn test_simple_parse_function_various_inputs() {
         // Test basic heading
         let html = parse_markdown("# Simple Heading");
-        assert!(html.contains("SimpleHeading") || html.contains("Simple Heading"));
+        assert!(
+            html.contains("Simple Heading"),
+            "Expected heading text to preserve whitespace"
+        );
         assert!(!html.is_empty());
 
         // Test paragraph with emphasis
@@ -205,17 +208,20 @@ mod tests {
 
         // Test list
         let html = parse_markdown("- Item 1\n- Item 2\n- Item 3");
-        assert!(html.contains("Item1") || html.contains("Item 1"));
-        assert!(html.contains("Item2") || html.contains("Item 2"));
+        assert!(
+            html.contains("Item 1"),
+            "Expected list items to preserve whitespace"
+        );
+        assert!(html.contains("Item 2"));
 
         // Test link
         let html = parse_markdown("[Link text](https://example.com)");
-        assert!(html.contains("Linktext") || html.contains("Link text"));
+        assert!(html.contains("Link text"));
         assert!(html.contains("example.com"));
 
         // Test blockquote
         let html = parse_markdown("> This is a quote");
-        assert!(html.contains("Thisisaquote") || html.contains("This is a quote"));
+        assert!(html.contains("This is a quote"));
 
         // Test empty input
         let html = parse_markdown("");
@@ -240,9 +246,12 @@ fn hello() {
 > A blockquote with some content.
 "#;
         let html = parse_markdown(complex_markdown);
-        assert!(html.contains("MainTitle") || html.contains("Main Title"));
+        assert!(html.contains("Main Title"));
         assert!(html.contains("Subsection"));
-        assert!(html.contains("Firstitem") || html.contains("First item"));
+        assert!(
+            html.contains("First item"),
+            "Expected mixed content to preserve whitespace in list items"
+        );
         assert!(html.contains("println!") || html.contains("Hello"));
         assert!(html.contains("blockquote"));
     }
