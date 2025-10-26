@@ -3,7 +3,6 @@
 /// This module provides the `Lexer` struct and related types for breaking down
 /// Markdown text into a stream of tokens that can be consumed by the parser.
 use crate::error::Result;
-
 use unicode_segmentation::{GraphemeIndices, UnicodeSegmentation};
 
 /// Represents the position of a token in the source text.
@@ -167,6 +166,7 @@ pub enum Token<'input> {
     EscapeSequence {
         character: char,
     },
+    Whitespace(&'input str),
 
     // Structural tokens
     Newline,
@@ -223,18 +223,16 @@ impl<'input> Lexer<'input> {
             return self.tokenize_indented_code_block();
         }
 
-        // Skip whitespace but preserve it for indentation detection
+        // Preserve whitespace tokens rather than skipping them outright
         if !self.char_stream.is_at_end()
             && self.char_stream.current_is_whitespace()
             && !self.char_stream.current_is('\n')
         {
-            // Handle indentation at start of line
             if self.is_at_line_start() {
                 return self.tokenize_indent();
-            } else {
-                // Skip whitespace in middle of line
-                self.skip_whitespace_except_newline();
             }
+
+            return self.tokenize_whitespace();
         }
 
         if self.char_stream.is_at_end() {
@@ -310,6 +308,17 @@ impl<'input> Lexer<'input> {
         temp_lexer.next_token()
     }
 
+    /// Peeks at the next non-whitespace token without consuming it.
+    pub fn peek_non_whitespace_token(&mut self) -> Result<Token<'input>> {
+        let mut temp_lexer = self.clone_state();
+        loop {
+            let token = temp_lexer.next_token()?;
+            if !matches!(token, Token::Whitespace(_)) {
+                return Ok(token);
+            }
+        }
+    }
+
     /// Creates a clone of the current lexer state for lookahead operations.
     fn clone_state(&self) -> Lexer<'input> {
         let mut cloned_stream = CharStream::new(self.char_stream.input);
@@ -354,6 +363,19 @@ impl<'input> Lexer<'input> {
             self.advance();
         }
         Ok(Token::Indent(indent_count))
+    }
+
+    /// Emits a whitespace token spanning consecutive spaces or tabs within a line.
+    fn tokenize_whitespace(&mut self) -> Result<Token<'input>> {
+        let start_offset = self.char_stream.current_offset().unwrap_or(0);
+        while !self.char_stream.is_at_end()
+            && self.char_stream.current_is_whitespace()
+            && !self.char_stream.current_is('\n')
+        {
+            self.advance();
+        }
+        let slice = self.char_stream.slice_from(start_offset);
+        Ok(Token::Whitespace(slice))
     }
 
     /// Tokenizes ATX headings (# ## ### etc.).
@@ -1253,6 +1275,23 @@ impl<'input> Lexer<'input> {
 mod tests {
     use super::*;
 
+    fn next_non_whitespace_token<'input>(lexer: &mut Lexer<'input>) -> Token<'input> {
+        loop {
+            let token = lexer.next_token().unwrap();
+            if !matches!(token, Token::Whitespace(_)) {
+                return token;
+            }
+        }
+    }
+
+    fn expect_whitespace_token<'input>(lexer: &mut Lexer<'input>, expected: &str) {
+        let token = lexer.next_token().unwrap();
+        match token {
+            Token::Whitespace(ws) => assert_eq!(ws, expected),
+            other => panic!("Expected whitespace {:?}, got {:?}", expected, other),
+        }
+    }
+
     #[test]
     fn test_lexer_creation() {
         let input = "Hello, World!";
@@ -1324,14 +1363,16 @@ mod tests {
         let input = "Hello World";
         let mut lexer = Lexer::new(input);
 
-        let token1 = lexer.next_token().unwrap();
+        let token1 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token1, Token::Text("Hello")));
 
-        let token2 = lexer.next_token().unwrap();
-        assert!(matches!(token2, Token::Text("World")));
+        expect_whitespace_token(&mut lexer, " ");
 
-        let token3 = lexer.next_token().unwrap();
-        assert!(matches!(token3, Token::Eof));
+        let token3 = next_non_whitespace_token(&mut lexer);
+        assert!(matches!(token3, Token::Text("World")));
+
+        let token4 = next_non_whitespace_token(&mut lexer);
+        assert!(matches!(token4, Token::Eof));
     }
 
     #[test]
@@ -1339,13 +1380,13 @@ mod tests {
         let input = "line1\nline2";
         let mut lexer = Lexer::new(input);
 
-        let token1 = lexer.next_token().unwrap();
+        let token1 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token1, Token::Text("line1")));
 
         let token2 = lexer.next_token().unwrap();
         assert!(matches!(token2, Token::Newline));
 
-        let token3 = lexer.next_token().unwrap();
+        let token3 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token3, Token::Text("line2")));
     }
 
@@ -1354,7 +1395,7 @@ mod tests {
         let input = "# Heading 1\n## Heading 2";
         let mut lexer = Lexer::new(input);
 
-        let token1 = lexer.next_token().unwrap();
+        let token1 = next_non_whitespace_token(&mut lexer);
         if let Token::AtxHeading { level, content } = token1 {
             assert_eq!(level, 1);
             assert_eq!(content, "Heading 1");
@@ -1365,7 +1406,7 @@ mod tests {
         let token2 = lexer.next_token().unwrap();
         assert!(matches!(token2, Token::Newline));
 
-        let token3 = lexer.next_token().unwrap();
+        let token3 = next_non_whitespace_token(&mut lexer);
         if let Token::AtxHeading { level, content } = token3 {
             assert_eq!(level, 2);
             assert_eq!(content, "Heading 2");
@@ -1380,7 +1421,7 @@ mod tests {
         let input = "*test*";
         let mut lexer = Lexer::new(input);
 
-        let token1 = lexer.next_token().unwrap();
+        let token1 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(
             token1,
             Token::Emphasis {
@@ -1389,10 +1430,10 @@ mod tests {
             }
         ));
 
-        let token2 = lexer.next_token().unwrap();
+        let token2 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token2, Token::Text("test")));
 
-        let token3 = lexer.next_token().unwrap();
+        let token3 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(
             token3,
             Token::Emphasis {
@@ -1405,7 +1446,7 @@ mod tests {
         let input2 = "*emphasis* **strong**";
         let mut lexer2 = Lexer::new(input2);
 
-        let token1 = lexer2.next_token().unwrap();
+        let token1 = next_non_whitespace_token(&mut lexer2);
         if let Token::Emphasis { marker, count } = token1 {
             assert_eq!(marker, '*');
             assert_eq!(count, 1);
@@ -1413,10 +1454,10 @@ mod tests {
             panic!("Expected Emphasis token, got {:?}", token1);
         }
 
-        let token2 = lexer2.next_token().unwrap();
+        let token2 = next_non_whitespace_token(&mut lexer2);
         assert!(matches!(token2, Token::Text("emphasis")));
 
-        let token3 = lexer2.next_token().unwrap();
+        let token3 = next_non_whitespace_token(&mut lexer2);
         if let Token::Emphasis { marker, count } = token3 {
             assert_eq!(marker, '*');
             assert_eq!(count, 1);
@@ -1424,12 +1465,25 @@ mod tests {
             panic!("Expected Emphasis token, got {:?}", token3);
         }
 
-        let token4 = lexer2.next_token().unwrap();
+        expect_whitespace_token(&mut lexer2, " ");
+
+        let token4 = next_non_whitespace_token(&mut lexer2);
         if let Token::Emphasis { marker, count } = token4 {
             assert_eq!(marker, '*');
             assert_eq!(count, 2);
         } else {
             panic!("Expected Emphasis token, got {:?}", token4);
+        }
+
+        let token5 = next_non_whitespace_token(&mut lexer2);
+        assert!(matches!(token5, Token::Text("strong")));
+
+        let token6 = next_non_whitespace_token(&mut lexer2);
+        if let Token::Emphasis { marker, count } = token6 {
+            assert_eq!(marker, '*');
+            assert_eq!(count, 2);
+        } else {
+            panic!("Expected Emphasis token, got {:?}", token6);
         }
     }
 
@@ -1438,17 +1492,21 @@ mod tests {
         let input = "`code` and `more code`";
         let mut lexer = Lexer::new(input);
 
-        let token1 = lexer.next_token().unwrap();
+        let token1 = next_non_whitespace_token(&mut lexer);
         if let Token::CodeSpan(content) = token1 {
             assert_eq!(content, "code");
         } else {
             panic!("Expected CodeSpan token, got {:?}", token1);
         }
 
-        let token2 = lexer.next_token().unwrap();
+        expect_whitespace_token(&mut lexer, " ");
+
+        let token2 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token2, Token::Text("and")));
 
-        let token3 = lexer.next_token().unwrap();
+        expect_whitespace_token(&mut lexer, " ");
+
+        let token3 = next_non_whitespace_token(&mut lexer);
         if let Token::CodeSpan(content) = token3 {
             assert_eq!(content, "more code");
         } else {
@@ -1461,7 +1519,7 @@ mod tests {
         let input = "- item\n1. numbered";
         let mut lexer = Lexer::new(input);
 
-        let token1 = lexer.next_token().unwrap();
+        let token1 = next_non_whitespace_token(&mut lexer);
         if let Token::ListMarker { kind, .. } = token1 {
             if let ListKind::Bullet { marker } = kind {
                 assert_eq!(marker, '-');
@@ -1472,11 +1530,14 @@ mod tests {
             panic!("Expected ListMarker token, got {:?}", token1);
         }
 
-        // Skip to next line
-        lexer.next_token().unwrap(); // "item"
+        // Consume item text on same line
+        expect_whitespace_token(&mut lexer, " ");
+        let token_text = next_non_whitespace_token(&mut lexer);
+        assert!(matches!(token_text, Token::Text("item")));
+
         lexer.next_token().unwrap(); // Newline
 
-        let token4 = lexer.next_token().unwrap();
+        let token4 = next_non_whitespace_token(&mut lexer);
         if let Token::ListMarker { kind, .. } = token4 {
             if let ListKind::Ordered { start, delimiter } = kind {
                 assert_eq!(start, 1);
@@ -1509,16 +1570,22 @@ mod tests {
         let input = "Hello 🌍 World 👋";
         let mut lexer = Lexer::new(input);
 
-        let token1 = lexer.next_token().unwrap();
+        let token1 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token1, Token::Text("Hello")));
 
-        let token2 = lexer.next_token().unwrap();
+        expect_whitespace_token(&mut lexer, " ");
+
+        let token2 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token2, Token::Text("🌍")));
 
-        let token3 = lexer.next_token().unwrap();
+        expect_whitespace_token(&mut lexer, " ");
+
+        let token3 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token3, Token::Text("World")));
 
-        let token4 = lexer.next_token().unwrap();
+        expect_whitespace_token(&mut lexer, " ");
+
+        let token4 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token4, Token::Text("👋")));
     }
 
@@ -1569,7 +1636,7 @@ mod tests {
         let mut lexer = Lexer::new(input);
 
         // First bullet marker
-        let token1 = lexer.next_token().unwrap();
+        let token1 = next_non_whitespace_token(&mut lexer);
         if let Token::ListMarker { kind, indent } = token1 {
             if let ListKind::Bullet { marker } = kind {
                 assert_eq!(marker, '-');
@@ -1582,11 +1649,13 @@ mod tests {
         }
 
         // Skip to nested bullet
-        lexer.next_token().unwrap(); // "bullet"
+        expect_whitespace_token(&mut lexer, " ");
+        let token_text = next_non_whitespace_token(&mut lexer);
+        assert!(matches!(token_text, Token::Text("bullet")));
         lexer.next_token().unwrap(); // Newline
         lexer.next_token().unwrap(); // Indent
 
-        let token2 = lexer.next_token().unwrap();
+        let token2 = next_non_whitespace_token(&mut lexer);
         if let Token::ListMarker { kind, indent } = token2 {
             if let ListKind::Bullet { marker } = kind {
                 assert_eq!(marker, '-');
@@ -1604,16 +1673,18 @@ mod tests {
         let input = "> This is a blockquote\n> Second line";
         let mut lexer = Lexer::new(input);
 
-        let token1 = lexer.next_token().unwrap();
+        let token1 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token1, Token::BlockQuote));
 
-        let token2 = lexer.next_token().unwrap();
+        expect_whitespace_token(&mut lexer, " ");
+
+        let token2 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token2, Token::Text("This")));
 
         // Skip to next line
         while !matches!(lexer.next_token().unwrap(), Token::Newline) {}
 
-        let token3 = lexer.next_token().unwrap();
+        let token3 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token3, Token::BlockQuote));
     }
 
@@ -1642,7 +1713,7 @@ mod tests {
         let mut lexer = Lexer::new(input);
 
         // *single*
-        let token1 = lexer.next_token().unwrap();
+        let token1 = next_non_whitespace_token(&mut lexer);
         if let Token::Emphasis { marker, count } = token1 {
             assert_eq!(marker, '*');
             assert_eq!(count, 1);
@@ -1650,10 +1721,10 @@ mod tests {
             panic!("Expected Emphasis token, got {:?}", token1);
         }
 
-        let token2 = lexer.next_token().unwrap();
+        let token2 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token2, Token::Text("single")));
 
-        let token3 = lexer.next_token().unwrap();
+        let token3 = next_non_whitespace_token(&mut lexer);
         if let Token::Emphasis { marker, count } = token3 {
             assert_eq!(marker, '*');
             assert_eq!(count, 1);
@@ -1661,8 +1732,10 @@ mod tests {
             panic!("Expected Emphasis token, got {:?}", token3);
         }
 
+        expect_whitespace_token(&mut lexer, " ");
+
         // **double**
-        let token4 = lexer.next_token().unwrap();
+        let token4 = next_non_whitespace_token(&mut lexer);
         if let Token::Emphasis { marker, count } = token4 {
             assert_eq!(marker, '*');
             assert_eq!(count, 2);
@@ -1670,10 +1743,10 @@ mod tests {
             panic!("Expected Emphasis token, got {:?}", token4);
         }
 
-        let token5 = lexer.next_token().unwrap();
+        let token5 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token5, Token::Text("double")));
 
-        let token6 = lexer.next_token().unwrap();
+        let token6 = next_non_whitespace_token(&mut lexer);
         if let Token::Emphasis { marker, count } = token6 {
             assert_eq!(marker, '*');
             assert_eq!(count, 2);
@@ -1681,8 +1754,10 @@ mod tests {
             panic!("Expected Emphasis token, got {:?}", token6);
         }
 
+        expect_whitespace_token(&mut lexer, " ");
+
         // ***triple***
-        let token7 = lexer.next_token().unwrap();
+        let token7 = next_non_whitespace_token(&mut lexer);
         if let Token::Emphasis { marker, count } = token7 {
             assert_eq!(marker, '*');
             assert_eq!(count, 3);
@@ -1697,23 +1772,27 @@ mod tests {
         let mut lexer = Lexer::new(input);
 
         // `simple`
-        let token1 = lexer.next_token().unwrap();
+        let token1 = next_non_whitespace_token(&mut lexer);
         if let Token::CodeSpan(content) = token1 {
             assert_eq!(content, "simple");
         } else {
             panic!("Expected CodeSpan token, got {:?}", token1);
         }
 
+        expect_whitespace_token(&mut lexer, " ");
+
         // ``with backticks ` inside``
-        let token2 = lexer.next_token().unwrap();
+        let token2 = next_non_whitespace_token(&mut lexer);
         if let Token::CodeSpan(content) = token2 {
             assert_eq!(content, "with backticks ` inside");
         } else {
             panic!("Expected CodeSpan token, got {:?}", token2);
         }
 
+        expect_whitespace_token(&mut lexer, " ");
+
         // ` spaced ` (should trim spaces)
-        let token3 = lexer.next_token().unwrap();
+        let token3 = next_non_whitespace_token(&mut lexer);
         if let Token::CodeSpan(content) = token3 {
             assert_eq!(content, "spaced");
         } else {
@@ -1728,7 +1807,7 @@ mod tests {
         let mut lexer = Lexer::new(input);
 
         // [simple link](http://example.com)
-        let token1 = lexer.next_token().unwrap();
+        let token1 = next_non_whitespace_token(&mut lexer);
         if let Token::Link { text, dest, title } = token1 {
             assert_eq!(text, "simple link");
             assert_eq!(dest, "http://example.com");
@@ -1737,8 +1816,10 @@ mod tests {
             panic!("Expected Link token, got {:?}", token1);
         }
 
+        expect_whitespace_token(&mut lexer, " ");
+
         // [link with title](http://example.com "Title")
-        let token2 = lexer.next_token().unwrap();
+        let token2 = next_non_whitespace_token(&mut lexer);
         if let Token::Link { text, dest, title } = token2 {
             assert_eq!(text, "link with title");
             assert_eq!(dest, "http://example.com");
@@ -1754,7 +1835,7 @@ mod tests {
         let mut lexer = Lexer::new(input);
 
         // ![alt text](image.jpg)
-        let token1 = lexer.next_token().unwrap();
+        let token1 = next_non_whitespace_token(&mut lexer);
         if let Token::Image { alt, dest, title } = token1 {
             assert_eq!(alt, "alt text");
             assert_eq!(dest, "image.jpg");
@@ -1763,8 +1844,10 @@ mod tests {
             panic!("Expected Image token, got {:?}", token1);
         }
 
+        expect_whitespace_token(&mut lexer, " ");
+
         // ![with title](image.jpg "Image Title")
-        let token2 = lexer.next_token().unwrap();
+        let token2 = next_non_whitespace_token(&mut lexer);
         if let Token::Image { alt, dest, title } = token2 {
             assert_eq!(alt, "with title");
             assert_eq!(dest, "image.jpg");
@@ -1779,16 +1862,22 @@ mod tests {
         let input = "regular text with spaces";
         let mut lexer = Lexer::new(input);
 
-        let token1 = lexer.next_token().unwrap();
+        let token1 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token1, Token::Text("regular")));
 
-        let token2 = lexer.next_token().unwrap();
+        expect_whitespace_token(&mut lexer, " ");
+
+        let token2 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token2, Token::Text("text")));
 
-        let token3 = lexer.next_token().unwrap();
+        expect_whitespace_token(&mut lexer, " ");
+
+        let token3 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token3, Token::Text("with")));
 
-        let token4 = lexer.next_token().unwrap();
+        expect_whitespace_token(&mut lexer, " ");
+
+        let token4 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token4, Token::Text("spaces")));
     }
 
@@ -1799,22 +1888,32 @@ mod tests {
         let input = "Hello 👨‍👩‍👧‍👦 family emoji 🏳️‍🌈 flag";
         let mut lexer = Lexer::new(input);
 
-        let token1 = lexer.next_token().unwrap();
+        let token1 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token1, Token::Text("Hello")));
 
-        let token2 = lexer.next_token().unwrap();
+        expect_whitespace_token(&mut lexer, " ");
+
+        let token2 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token2, Token::Text("👨‍👩‍👧‍👦")));
 
-        let token3 = lexer.next_token().unwrap();
+        expect_whitespace_token(&mut lexer, " ");
+
+        let token3 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token3, Token::Text("family")));
 
-        let token4 = lexer.next_token().unwrap();
+        expect_whitespace_token(&mut lexer, " ");
+
+        let token4 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token4, Token::Text("emoji")));
 
-        let token5 = lexer.next_token().unwrap();
+        expect_whitespace_token(&mut lexer, " ");
+
+        let token5 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token5, Token::Text("🏳️‍🌈")));
 
-        let token6 = lexer.next_token().unwrap();
+        expect_whitespace_token(&mut lexer, " ");
+
+        let token6 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token6, Token::Text("flag")));
     }
 
@@ -1823,19 +1922,27 @@ mod tests {
         let input = "Héllo Wörld 中文 العربية русский";
         let mut lexer = Lexer::new(input);
 
-        let token1 = lexer.next_token().unwrap();
+        let token1 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token1, Token::Text("Héllo")));
 
-        let token2 = lexer.next_token().unwrap();
+        expect_whitespace_token(&mut lexer, " ");
+
+        let token2 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token2, Token::Text("Wörld")));
 
-        let token3 = lexer.next_token().unwrap();
+        expect_whitespace_token(&mut lexer, " ");
+
+        let token3 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token3, Token::Text("中文")));
 
-        let token4 = lexer.next_token().unwrap();
+        expect_whitespace_token(&mut lexer, " ");
+
+        let token4 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token4, Token::Text("العربية")));
 
-        let token5 = lexer.next_token().unwrap();
+        expect_whitespace_token(&mut lexer, " ");
+
+        let token5 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token5, Token::Text("русский")));
     }
 
@@ -1844,13 +1951,17 @@ mod tests {
         let input = "café naïve résumé";
         let mut lexer = Lexer::new(input);
 
-        let token1 = lexer.next_token().unwrap();
+        let token1 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token1, Token::Text("café")));
 
-        let token2 = lexer.next_token().unwrap();
+        expect_whitespace_token(&mut lexer, " ");
+
+        let token2 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token2, Token::Text("naïve")));
 
-        let token3 = lexer.next_token().unwrap();
+        expect_whitespace_token(&mut lexer, " ");
+
+        let token3 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token3, Token::Text("résumé")));
     }
 
@@ -1943,14 +2054,18 @@ mod tests {
         assert_eq!(lexer.position().column, 1);
 
         // List marker
-        let token2 = lexer.next_token().unwrap();
+        let token2 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token2, Token::ListMarker { .. }));
 
         // List item text
-        let token3 = lexer.next_token().unwrap();
+        expect_whitespace_token(&mut lexer, " ");
+
+        let token3 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token3, Token::Text("List")));
 
-        let token4 = lexer.next_token().unwrap();
+        expect_whitespace_token(&mut lexer, " ");
+
+        let token4 = next_non_whitespace_token(&mut lexer);
         assert!(matches!(token4, Token::Text("item")));
     }
 

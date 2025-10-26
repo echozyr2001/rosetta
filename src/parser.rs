@@ -222,6 +222,53 @@ impl<'input> Parser<'input> {
         self.lexer.peek_token()
     }
 
+    /// Skips any whitespace tokens in the current stream.
+    fn consume_whitespace_tokens(&mut self) -> Result<()> {
+        while matches!(self.current_token, Some(Token::Whitespace(_))) {
+            self.advance()?;
+        }
+        Ok(())
+    }
+
+    /// Parses an optional link reference title, preserving whitespace.
+    fn parse_reference_title(&mut self) -> Result<Option<String>> {
+        self.consume_whitespace_tokens()?;
+
+        let (opening, closing) = match &self.current_token {
+            Some(Token::Text(text)) if text.starts_with('"') => ('"', '"'),
+            Some(Token::Text(text)) if text.starts_with('\'') => ('\'', '\''),
+            Some(Token::Text(text)) if text.starts_with('(') => ('(', ')'),
+            _ => return Ok(None),
+        };
+
+        let mut collected = String::new();
+
+        while let Some(token) = &self.current_token {
+            match token {
+                Token::Text(part) => {
+                    collected.push_str(part);
+                    self.advance()?;
+                }
+                Token::Whitespace(ws) => {
+                    collected.push_str(ws);
+                    self.advance()?;
+                }
+                _ => break,
+            }
+
+            if collected.ends_with(closing) {
+                break;
+            }
+        }
+
+        if collected.len() >= 2 && collected.starts_with(opening) && collected.ends_with(closing) {
+            let inner = &collected[1..collected.len() - 1];
+            return Ok(Some(inner.to_string()));
+        }
+
+        Ok(None)
+    }
+
     /// Checks if the current token matches the expected token type
     #[allow(dead_code)]
     fn current_token_is(&self, expected: &Token) -> bool {
@@ -652,6 +699,10 @@ impl<'input> Parser<'input> {
                     inline_content.extend(processed_inlines);
                     self.advance()?;
                 }
+                Some(Token::Whitespace(ws)) => {
+                    inline_content.push(crate::ast::utils::NodeBuilder::text(ws.to_string()));
+                    self.advance()?;
+                }
                 Some(Token::Emphasis { marker, count }) => {
                     let emphasis = self.parse_emphasis(*marker, *count)?;
                     inline_content.push(emphasis);
@@ -715,6 +766,10 @@ impl<'input> Parser<'input> {
                     // Check if text contains HTML inline elements
                     let processed_inlines = self.process_text_for_html_inlines(text)?;
                     inlines.extend(processed_inlines);
+                    self.advance()?;
+                }
+                Some(Token::Whitespace(ws)) => {
+                    inlines.push(crate::ast::utils::NodeBuilder::text(ws.to_string()));
                     self.advance()?;
                 }
                 Some(Token::Emphasis { marker, count }) => {
@@ -1223,8 +1278,7 @@ impl<'input> Parser<'input> {
                 dest: "",
                 title: None,
             }) => {
-                // Use peek_token to look ahead
-                if let Ok(next_token) = self.lexer.peek_token() {
+                if let Ok(next_token) = self.lexer.peek_non_whitespace_token() {
                     matches!(next_token, Token::Text(text) if text.starts_with(':'))
                 } else {
                     false
@@ -1248,48 +1302,22 @@ impl<'input> Parser<'input> {
         {
             let label = text.to_string();
             self.advance()?; // consume [label]
+            self.consume_whitespace_tokens()?;
 
             // Expect ":"
             if let Some(Token::Text(colon_text)) = &self.current_token
                 && colon_text.starts_with(':')
             {
                 self.advance()?; // consume ":"
+                self.consume_whitespace_tokens()?;
 
                 // Parse destination
                 if let Some(Token::Text(dest_text)) = &self.current_token {
                     let destination = dest_text.trim_matches(|c| c == '<' || c == '>').to_string();
                     self.advance()?; // consume destination
+                    self.consume_whitespace_tokens()?;
 
-                    // Parse optional title
-                    let mut title = None;
-                    if let Some(Token::Text(title_text)) = &self.current_token {
-                        let trimmed_title = title_text.trim();
-                        if (trimmed_title.starts_with('"') && trimmed_title.ends_with('"'))
-                            || (trimmed_title.starts_with('\'') && trimmed_title.ends_with('\''))
-                            || (trimmed_title.starts_with('(') && trimmed_title.ends_with(')'))
-                        {
-                            title = Some(trimmed_title[1..trimmed_title.len() - 1].to_string());
-                            self.advance()?; // consume title
-                        } else if trimmed_title.starts_with('"') {
-                            // Title might be split across tokens, collect until closing quote
-                            let mut title_parts = vec![trimmed_title];
-                            self.advance()?;
-
-                            while let Some(Token::Text(part)) = &self.current_token {
-                                title_parts.push(part);
-                                if part.ends_with('"') {
-                                    self.advance()?;
-                                    break;
-                                }
-                                self.advance()?;
-                            }
-
-                            let full_title = title_parts.join(" ");
-                            if full_title.starts_with('"') && full_title.ends_with('"') {
-                                title = Some(full_title[1..full_title.len() - 1].to_string());
-                            }
-                        }
-                    }
+                    let title = self.parse_reference_title()?;
 
                     // Add to reference map
                     self.add_reference_definition(label, destination, title);
