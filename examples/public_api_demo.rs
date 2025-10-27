@@ -75,6 +75,8 @@ fn main() {
                 preserve_positions: true,
                 global_attributes: global_attrs,
                 validate_structure: true,
+                add_css_classes: true,
+                wrap_root_in_div: true,
             })
             .generation(GenerationConfig {
                 source_maps: true,

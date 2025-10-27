@@ -723,24 +723,23 @@ impl<'input> Lexer<'input> {
         ) {
             let marker = self.char_stream.current().unwrap().chars().next().unwrap();
 
-            // Check if the character after the marker is a space or tab
-            let next_offset = current_offset + 1;
-            if next_offset < self.char_stream.input.len() {
-                let next_char = &self.char_stream.input[next_offset..next_offset + 1];
-                if next_char == " " || next_char == "\t" {
-                    self.advance(); // Consume the marker
+            match self.char_stream.peek() {
+                Some(next) if next == " " || next == "\t" => {
+                    self.advance(); // Consume the marker only when followed by valid whitespace
                     return Ok(Some(Token::ListMarker {
                         kind: ListKind::Bullet { marker },
                         indent: indent_level,
                     }));
                 }
-            } else {
-                // End of input after marker is also valid
-                self.advance();
-                return Ok(Some(Token::ListMarker {
-                    kind: ListKind::Bullet { marker },
-                    indent: indent_level,
-                }));
+                None => {
+                    // End of input after marker is also valid
+                    self.advance();
+                    return Ok(Some(Token::ListMarker {
+                        kind: ListKind::Bullet { marker },
+                        indent: indent_level,
+                    }));
+                }
+                _ => {}
             }
         }
 
@@ -793,12 +792,14 @@ impl<'input> Lexer<'input> {
     /// Finds the start of the current line.
     fn find_line_start(&self, current_offset: usize) -> usize {
         let input = self.char_stream.input;
-        for i in (0..current_offset).rev() {
-            if input.chars().nth(i) == Some('\n') {
-                return i + 1;
-            }
+        if current_offset == 0 || current_offset > input.len() {
+            return 0;
         }
-        0
+
+        input[..current_offset]
+            .rfind('\n')
+            .map(|idx| idx + 1)
+            .unwrap_or(0)
     }
 
     /// Checks if current character is an emphasis marker.
@@ -975,11 +976,16 @@ impl<'input> Lexer<'input> {
             }
 
             let end = if self.char_stream.current_is('>') {
-                let end_pos = self.char_stream.current_offset().unwrap_or(0);
+                let end_pos = self
+                    .char_stream
+                    .current_offset()
+                    .unwrap_or(self.char_stream.input.len());
                 self.advance(); // Skip >
                 end_pos
             } else {
-                self.char_stream.current_offset().unwrap_or(0)
+                self.char_stream
+                    .current_offset()
+                    .unwrap_or(self.char_stream.input.len())
             };
             (start, end)
         } else {
@@ -1002,11 +1008,18 @@ impl<'input> Lexer<'input> {
                 }
                 self.advance();
             }
-            let end = self.char_stream.current_offset().unwrap_or(0);
+            let end = self
+                .char_stream
+                .current_offset()
+                .unwrap_or(self.char_stream.input.len());
             (start, end)
         };
 
-        let destination = &self.char_stream.input[dest_start..dest_end];
+        let destination = if dest_end >= dest_start {
+            &self.char_stream.input[dest_start..dest_end]
+        } else {
+            ""
+        };
 
         // Skip whitespace before potential title
         self.skip_whitespace_except_newline();
@@ -1037,7 +1050,10 @@ impl<'input> Lexer<'input> {
                 }
 
                 if self.char_stream.current_is_str(closing_quote) {
-                    let title_end = self.char_stream.current_offset().unwrap_or(0);
+                    let title_end = self
+                        .char_stream
+                        .current_offset()
+                        .unwrap_or(self.char_stream.input.len());
                     title = Some(&self.char_stream.input[title_start..title_end]);
                     self.advance(); // Skip closing quote
                 }

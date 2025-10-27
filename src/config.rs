@@ -42,6 +42,10 @@ pub struct DomConfig {
     pub global_attributes: HashMap<String, String>,
     /// Whether to validate DOM structure during transformation
     pub validate_structure: bool,
+    /// Whether to generate CSS classes during DOM transformation
+    pub add_css_classes: bool,
+    /// Whether to wrap the rendered output in a root div element
+    pub wrap_root_in_div: bool,
 }
 
 impl Default for DomConfig {
@@ -50,6 +54,8 @@ impl Default for DomConfig {
             preserve_positions: false,
             global_attributes: HashMap::new(),
             validate_structure: true,
+            add_css_classes: true,
+            wrap_root_in_div: true,
         }
     }
 }
@@ -177,6 +183,28 @@ impl EngineConfigBuilder {
     /// Sets CommonMark strict compliance mode.
     pub fn strict_commonmark(mut self, strict: bool) -> Self {
         self.config.parser.strict_commonmark = strict;
+        if strict {
+            self.config.dom.add_css_classes = false;
+            self.config.dom.wrap_root_in_div = false;
+            let output = &mut self.config.generation.output;
+            output.pretty_print = false;
+            output.add_newlines = false;
+            output.add_commonmark_attributes = false;
+            output.wrap_in_document = false;
+            output.html5_compliance = false;
+            output.validate_html_structure = false;
+        } else {
+            self.config.dom.add_css_classes = true;
+            self.config.dom.wrap_root_in_div = true;
+            let default_output = OutputConfig::default();
+            let output = &mut self.config.generation.output;
+            output.pretty_print = default_output.pretty_print;
+            output.add_newlines = default_output.add_newlines;
+            output.add_commonmark_attributes = default_output.add_commonmark_attributes;
+            output.wrap_in_document = default_output.wrap_in_document;
+            output.html5_compliance = default_output.html5_compliance;
+            output.validate_html_structure = default_output.validate_html_structure;
+        }
         self
     }
 
@@ -341,14 +369,7 @@ impl MarkdownEngine {
             self.parse_to_ast(markdown)?
         };
 
-        // Convert to DOM if needed for advanced processing
-        if self.config.dom.preserve_positions || !self.config.dom.global_attributes.is_empty() {
-            let dom = self.ast_to_dom(document)?;
-            self.dom_to_html(dom)
-        } else {
-            // Direct AST to HTML conversion for better performance
-            self.ast_to_html(document)
-        }
+        self.ast_to_html(document)
     }
 
     /// Parses Markdown text into an Abstract Syntax Tree.
@@ -381,7 +402,16 @@ impl MarkdownEngine {
     /// Returns the DOM root node, or an error if conversion fails.
     pub fn ast_to_dom(&self, document: Document) -> Result<DomNode> {
         // Apply DOM configuration
-        let mut dom = crate::dom::from_ast(document)?;
+        let transformer_config = crate::dom::DomConfig {
+            add_source_positions: self.config.dom.preserve_positions,
+            add_css_classes: self.config.dom.add_css_classes,
+            wrap_root_in_div: self.config.dom.wrap_root_in_div,
+            maintain_hierarchy: self.config.dom.validate_structure,
+            ..crate::dom::DomConfig::default()
+        };
+
+        let transformer = crate::dom::DomTransformer::new(transformer_config);
+        let mut dom = transformer.transform(&document)?;
 
         // Add global attributes if configured
         if !self.config.dom.global_attributes.is_empty() {
@@ -404,8 +434,8 @@ impl MarkdownEngine {
     ///
     /// Returns the generated HTML string.
     pub fn ast_to_html(&self, document: Document) -> Result<String> {
-        let generator = crate::codegen::HtmlGenerator::new(self.config.generation.output.clone());
-        generator.generate_from_ast(&document)
+        let dom = self.ast_to_dom(document)?;
+        self.dom_to_html(dom)
     }
 
     /// Generates HTML from a DOM node.
