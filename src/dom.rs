@@ -88,6 +88,11 @@ impl DomNode {
         self.children.len()
     }
 
+    /// Returns true if this node represents a document fragment (no tag).
+    pub fn is_fragment(&self) -> bool {
+        self.tag.is_empty()
+    }
+
     /// Returns an iterator over the children.
     pub fn children_iter(&self) -> std::slice::Iter<'_, DomChild> {
         self.children.iter()
@@ -507,6 +512,8 @@ pub struct DomConfig {
     pub preserve_whitespace: bool,
     /// Whether to add CSS classes for element types
     pub add_css_classes: bool,
+    /// Whether to wrap the document in a root div element
+    pub wrap_root_in_div: bool,
     /// Custom element processors for extending transformation
     pub element_processors: Vec<Box<dyn ElementProcessor>>,
     /// Whether to maintain strict document hierarchy (requirement 3.4)
@@ -532,6 +539,7 @@ impl Clone for DomConfig {
             custom_attributes: self.custom_attributes.clone(),
             preserve_whitespace: self.preserve_whitespace,
             add_css_classes: self.add_css_classes,
+            wrap_root_in_div: self.wrap_root_in_div,
             maintain_hierarchy: self.maintain_hierarchy,
             enable_serialization: self.enable_serialization,
             css_class_prefix: self.css_class_prefix.clone(),
@@ -553,6 +561,7 @@ impl Default for DomConfig {
             custom_attributes: HashMap::new(),
             preserve_whitespace: false,
             add_css_classes: true,
+            wrap_root_in_div: true,
             maintain_hierarchy: true,
             enable_serialization: false,
             css_class_prefix: None,
@@ -606,6 +615,12 @@ impl DomConfigBuilder {
     /// Enable or disable CSS class generation
     pub fn with_css_classes(mut self, enabled: bool) -> Self {
         self.config.add_css_classes = enabled;
+        self
+    }
+
+    /// Enable or disable wrapping the document in a root div element
+    pub fn with_root_wrapper(mut self, enabled: bool) -> Self {
+        self.config.wrap_root_in_div = enabled;
         self
     }
 
@@ -820,35 +835,43 @@ impl DomTransformer {
         &self,
         document: &crate::ast::Document,
     ) -> Result<DomNode, crate::error::MarkdownError> {
-        let mut root = DomNode::new("div");
+        let mut root = if self.config.wrap_root_in_div {
+            DomNode::new("div")
+        } else {
+            DomNode::new("")
+        };
 
-        // Add default attributes
-        if self.config.add_css_classes {
-            let class_name = if let Some(prefix) = &self.config.css_class_prefix {
-                format!("{}-markdown-content", prefix)
-            } else {
-                "markdown-content".to_string()
-            };
-            root.add_attribute("class", &class_name);
+        if self.config.wrap_root_in_div {
+            // Add default attributes
+            if self.config.add_css_classes {
+                let class_name = if let Some(prefix) = &self.config.css_class_prefix {
+                    format!("{}-markdown-content", prefix)
+                } else {
+                    "markdown-content".to_string()
+                };
+                root.add_attribute("class", &class_name);
+            }
+
+            // Add element type data attribute if enabled
+            if self.config.add_element_type_attributes {
+                let attr_name = if let Some(namespace) = &self.config.data_attribute_namespace {
+                    format!("data-{}-type", namespace)
+                } else {
+                    "data-type".to_string()
+                };
+                root.add_attribute(&attr_name, "document");
+            }
+
+            // Add custom attributes
+            for (key, value) in &self.config.custom_attributes {
+                root.add_attribute(key, value);
+            }
         }
 
-        // Add element type data attribute if enabled
-        if self.config.add_element_type_attributes {
-            let attr_name = if let Some(namespace) = &self.config.data_attribute_namespace {
-                format!("data-{}-type", namespace)
-            } else {
-                "data-type".to_string()
-            };
-            root.add_attribute(&attr_name, "document");
-        }
-
-        // Add custom attributes
-        for (key, value) in &self.config.custom_attributes {
-            root.add_attribute(key, value);
-        }
+        let merged_blocks = Self::merge_code_blocks(&document.blocks);
 
         // Transform all blocks in the document
-        for block in &document.blocks {
+        for block in &merged_blocks {
             let dom_child = self.transform_block(block)?;
             if self.config.preserve_empty_elements
                 || dom_child.has_children()
@@ -877,6 +900,58 @@ impl DomTransformer {
         }
 
         Ok(root)
+    }
+
+    fn merge_code_blocks(blocks: &[crate::ast::Block]) -> Vec<crate::ast::Block> {
+        use crate::ast::Block;
+
+        let mut merged = Vec::with_capacity(blocks.len());
+        let mut index = 0;
+
+        while index < blocks.len() {
+            match &blocks[index] {
+                Block::CodeBlock {
+                    info,
+                    content,
+                    language,
+                    position,
+                } => {
+                    let mut combined_content = content.clone();
+                    let mut lookahead = index + 1;
+
+                    while lookahead < blocks.len() {
+                        match &blocks[lookahead] {
+                            Block::CodeBlock {
+                                info: next_info,
+                                content: next_content,
+                                language: next_language,
+                                ..
+                            } if info == next_info && language == next_language => {
+                                combined_content.push('\n');
+                                combined_content.push_str(next_content);
+                                lookahead += 1;
+                            }
+                            _ => break,
+                        }
+                    }
+
+                    merged.push(Block::CodeBlock {
+                        info: info.clone(),
+                        content: combined_content,
+                        language: language.clone(),
+                        position: *position,
+                    });
+
+                    index = lookahead;
+                }
+                other => {
+                    merged.push(other.clone());
+                    index += 1;
+                }
+            }
+        }
+
+        merged
     }
 
     /// Transforms a block AST node into a DOM node
@@ -962,7 +1037,11 @@ impl DomTransformer {
 
                 self.add_position_attribute(&mut pre, position)?;
 
-                code.add_text_child(content);
+                let mut code_content = content.clone();
+                if !self.config.wrap_root_in_div && !code_content.ends_with('\n') {
+                    code_content.push('\n');
+                }
+                code.add_text_child(&code_content);
                 pre.add_element_child(code);
                 pre
             }

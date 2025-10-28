@@ -462,11 +462,13 @@ impl<'input> Parser<'input> {
             Some(Token::SetextHeading { level, content }) => {
                 self.parse_setext_heading(*level, content)
             }
-            Some(Token::CodeBlock { info, content }) => {
-                self.parse_code_block(info.as_ref().map(|s| *s), content)
-            }
+            Some(Token::CodeBlock {
+                info,
+                content,
+                leading_indent,
+            }) => self.parse_code_block(info.as_ref().copied(), content, *leading_indent),
             Some(Token::BlockQuote) => self.parse_blockquote(),
-            Some(Token::ListMarker { kind, indent }) => self.parse_list(kind.clone(), *indent),
+            Some(Token::ListMarker { kind, indent, .. }) => self.parse_list(kind.clone(), *indent),
             Some(Token::ThematicBreak) => self.parse_thematic_break(),
             _ => {
                 // Default to paragraph parsing for text and other inline content
@@ -518,7 +520,12 @@ impl<'input> Parser<'input> {
     }
 
     /// Parses a code block (fenced or indented)
-    fn parse_code_block(&mut self, info: Option<&str>, content: &str) -> Result<Block> {
+    fn parse_code_block(
+        &mut self,
+        info: Option<&str>,
+        content: &str,
+        _leading_indent: usize,
+    ) -> Result<Block> {
         let position = Some(self.position());
         self.advance()?; // consume the code block token
 
@@ -600,6 +607,8 @@ impl<'input> Parser<'input> {
             if let Some(Token::ListMarker {
                 kind: item_kind,
                 indent,
+                marker_width,
+                padding,
             }) = &self.current_token
             {
                 // Check if this marker matches our list type and indentation level
@@ -607,7 +616,7 @@ impl<'input> Parser<'input> {
                     break; // Different list type or indentation level
                 }
 
-                let item = self.parse_list_item()?;
+                let item = self.parse_list_item(*marker_width, *padding, base_indent)?;
                 items.push(item);
 
                 // Check for blank lines between items (makes list loose)
@@ -628,14 +637,26 @@ impl<'input> Parser<'input> {
     }
 
     /// Parses a single list item
-    fn parse_list_item(&mut self) -> Result<crate::ast::ListItem> {
+    fn parse_list_item(
+        &mut self,
+        marker_width: usize,
+        padding: usize,
+        base_indent: usize,
+    ) -> Result<crate::ast::ListItem> {
         self.advance()?; // consume the list marker
 
         let mut content = Vec::new();
         let mut tight = true;
 
+        // Continuation lines must be indented at least this much to align with paragraph content.
+        let continuation_padding = if padding == 0 { 1 } else { padding };
+        let content_indent = base_indent + marker_width + continuation_padding;
+
         // Skip whitespace after list marker
-        while matches!(self.current_token, Some(Token::Indent(_))) {
+        while matches!(
+            self.current_token,
+            Some(Token::Indent(_)) | Some(Token::Whitespace(_))
+        ) {
             self.advance()?;
         }
 
@@ -655,18 +676,60 @@ impl<'input> Parser<'input> {
                 continue;
             }
 
-            // Check if next line is indented (continuation of list item)
-            if matches!(self.current_token, Some(Token::Indent(_))) {
-                self.advance()?; // consume indentation
-                if !self.is_at_end()
-                    && !matches!(self.current_token, Some(Token::ListMarker { .. }))
-                {
-                    let block = self.parse_block()?;
+            // Handle indented continuation lines or code blocks
+            match self.current_token.as_ref() {
+                Some(Token::Indent(_)) => {
+                    self.advance()?; // consume indentation
+                    if !self.is_at_end()
+                        && !matches!(self.current_token, Some(Token::ListMarker { .. }))
+                    {
+                        let block = self.parse_block()?;
+                        content.push(block);
+                    }
+                }
+                Some(Token::CodeBlock {
+                    info,
+                    content: block_content,
+                    leading_indent,
+                }) if info.is_none() => {
+                    let relative_indent = leading_indent.saturating_sub(content_indent);
+                    if relative_indent < 4 {
+                        // Treat as paragraph continuation rather than code block
+                        let position = Some(self.position());
+                        let inline_content = self.parse_text_as_inline(block_content)?;
+                        self.advance()?; // consume code block token
+                        tight = false;
+                        content.push(Block::Paragraph {
+                            content: inline_content,
+                            position,
+                        });
+                    } else {
+                        let block = self.parse_code_block(
+                            info.as_ref().copied(),
+                            block_content,
+                            *leading_indent,
+                        )?;
+                        content.push(block);
+                    }
+                }
+                Some(Token::CodeBlock {
+                    info,
+                    content: block_content,
+                    leading_indent,
+                }) => {
+                    let block = self.parse_code_block(
+                        info.as_ref().copied(),
+                        block_content,
+                        *leading_indent,
+                    )?;
                     content.push(block);
                 }
-            } else {
-                // End of list item
-                break;
+                Some(Token::Whitespace(_)) => {
+                    self.advance()?;
+                }
+                _ => {
+                    break;
+                }
             }
         }
 

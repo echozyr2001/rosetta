@@ -507,6 +507,18 @@ impl HtmlGenerator {
 
     /// Renders a DOM node and its children
     fn render_dom_node(&self, node: &DomNode, writer: &mut HtmlWriter) -> Result<()> {
+        if node.is_fragment() {
+            for child in node.children_iter() {
+                match child {
+                    crate::dom::DomChild::Element(element) => {
+                        self.render_dom_node(element, writer)?;
+                    }
+                    crate::dom::DomChild::Text(text) => writer.write_text(text),
+                }
+            }
+            return Ok(());
+        }
+
         // Validate HTML5 compliance if enabled
         if writer.config.validate_html_structure {
             self.validate_html5_tag(&node.tag)?;
