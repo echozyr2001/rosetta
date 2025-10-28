@@ -178,7 +178,7 @@ fn normalize_html(html: &str) -> String {
             last_was_space = false;
         }
     }
-    normalized
+    normalized.replace("> <", "><")
 }
 
 fn should_run_example(example: &SpecExample) -> bool {

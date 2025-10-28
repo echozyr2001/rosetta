@@ -138,11 +138,14 @@ pub enum Token<'input> {
     CodeBlock {
         info: Option<&'input str>,
         content: &'input str,
+        leading_indent: usize,
     },
     BlockQuote,
     ListMarker {
         kind: ListKind,
         indent: usize,
+        marker_width: usize,
+        padding: usize,
     },
     ThematicBreak,
 
@@ -358,9 +361,17 @@ impl<'input> Lexer<'input> {
     /// Tokenizes indentation at the start of a line.
     fn tokenize_indent(&mut self) -> Result<Token<'input>> {
         let mut indent_count = 0;
-        while !self.char_stream.is_at_end() && self.char_stream.current_is(' ') {
-            indent_count += 1;
-            self.advance();
+        while !self.char_stream.is_at_end() {
+            if self.char_stream.current_is(' ') {
+                indent_count += 1;
+                self.advance();
+            } else if self.char_stream.current_is('\t') {
+                let spaces_to_next_tab = 4 - (indent_count % 4);
+                indent_count += spaces_to_next_tab;
+                self.advance();
+            } else {
+                break;
+            }
         }
         Ok(Token::Indent(indent_count))
     }
@@ -485,35 +496,47 @@ impl<'input> Lexer<'input> {
         if !self.is_at_line_start() {
             return false;
         }
+        let indent = self.measure_line_indent();
+        if indent < 4 {
+            return false;
+        }
 
-        // Must have at least 4 spaces at the start of the line
-        let current_offset = self.char_stream.current_offset().unwrap_or(0);
-        let remaining = &self.char_stream.input[current_offset..];
-
-        let mut space_count = 0;
-        for ch in remaining.chars() {
-            if ch == ' ' {
-                space_count += 1;
-            } else if ch == '\t' {
-                space_count += 4; // Tab counts as 4 spaces
+        // Check if there is any non-whitespace content on this line after indent trimming
+        let mut temp = self.clone_state();
+        let mut trimmed = 0;
+        while trimmed < 4 {
+            if temp.char_stream.current_is(' ') {
+                trimmed += 1;
+                temp.advance();
+            } else if temp.char_stream.current_is('\t') {
+                let spaces_to_next_tab = 4 - (trimmed % 4);
+                trimmed += spaces_to_next_tab;
+                temp.advance();
             } else {
                 break;
             }
         }
 
-        space_count >= 4
+        while temp.char_stream.current_is(' ') || temp.char_stream.current_is('\t') {
+            temp.advance();
+        }
+
+        !matches!(temp.char_stream.current(), Some("\n") | None)
     }
 
     /// Tokenizes indented code blocks (4+ spaces).
     fn tokenize_indented_code_block(&mut self) -> Result<Token<'input>> {
-        // Skip the indentation
-        let mut indent_count = 0;
-        while !self.char_stream.is_at_end() && indent_count < 4 {
+        let leading_indent = self.measure_line_indent();
+
+        // Skip indentation equivalent to four spaces for the code block offset
+        let mut trimmed = 0;
+        while !self.char_stream.is_at_end() && trimmed < 4 {
             if self.char_stream.current_is(' ') {
-                indent_count += 1;
+                trimmed += 1;
                 self.advance();
             } else if self.char_stream.current_is('\t') {
-                indent_count = 4; // Tab counts as reaching the 4-space threshold
+                let spaces_to_next_tab = 4 - (trimmed % 4);
+                trimmed += spaces_to_next_tab;
                 self.advance();
             } else {
                 break;
@@ -535,6 +558,7 @@ impl<'input> Lexer<'input> {
         Ok(Token::CodeBlock {
             info: None, // Indented code blocks don't have info strings
             content,
+            leading_indent,
         })
     }
 
@@ -682,7 +706,11 @@ impl<'input> Lexer<'input> {
         }
 
         let content = &self.char_stream.input[content_start..content_end];
-        Ok(Token::CodeBlock { info, content })
+        Ok(Token::CodeBlock {
+            info,
+            content,
+            leading_indent: 0,
+        })
     }
 
     /// Tries to tokenize list markers.
@@ -724,19 +752,27 @@ impl<'input> Lexer<'input> {
             let marker = self.char_stream.current().unwrap().chars().next().unwrap();
 
             match self.char_stream.peek() {
-                Some(next) if next == " " || next == "\t" => {
-                    self.advance(); // Consume the marker only when followed by valid whitespace
+                Some(next) if next == " " || next == "\t" || next == "\n" => {
+                    self.advance();
+                    let padding = if next == " " || next == "\t" {
+                        self.measure_list_padding()
+                    } else {
+                        0
+                    };
                     return Ok(Some(Token::ListMarker {
                         kind: ListKind::Bullet { marker },
                         indent: indent_level,
+                        marker_width: 1,
+                        padding,
                     }));
                 }
                 None => {
-                    // End of input after marker is also valid
                     self.advance();
                     return Ok(Some(Token::ListMarker {
                         kind: ListKind::Bullet { marker },
                         indent: indent_level,
+                        marker_width: 1,
+                        padding: 0,
                     }));
                 }
                 _ => {}
@@ -764,11 +800,15 @@ impl<'input> Lexer<'input> {
                     if next_ch == Some(' ') || next_ch == Some('\t') || next_ch.is_none() {
                         let number = number_str.parse::<u32>().unwrap_or(0);
 
+                        let marker_width = number_str.len() + 1; // digits + delimiter
+
                         // Advance past the number and delimiter
                         for _ in 0..number_str.len() {
                             self.advance();
                         }
                         self.advance(); // delimiter
+
+                        let padding = self.measure_list_padding();
 
                         return Ok(Some(Token::ListMarker {
                             kind: ListKind::Ordered {
@@ -776,6 +816,8 @@ impl<'input> Lexer<'input> {
                                 delimiter: ch,
                             },
                             indent: indent_level,
+                            marker_width,
+                            padding,
                         }));
                     } else {
                         break;
@@ -800,6 +842,52 @@ impl<'input> Lexer<'input> {
             .rfind('\n')
             .map(|idx| idx + 1)
             .unwrap_or(0)
+    }
+
+    /// Measures whitespace padding immediately following a list marker.
+    fn measure_list_padding(&self) -> usize {
+        let mut padding = 0;
+        let mut temp = self.clone_state();
+
+        while let Some(grapheme) = temp.char_stream.current() {
+            match grapheme {
+                " " => {
+                    padding += 1;
+                    temp.advance();
+                }
+                "\t" => {
+                    let spaces_to_next_tab = 4 - (padding % 4);
+                    padding += spaces_to_next_tab;
+                    temp.advance();
+                }
+                _ => break,
+            }
+        }
+
+        padding
+    }
+
+    /// Measures indentation at the current line start using CommonMark tab stops.
+    fn measure_line_indent(&self) -> usize {
+        let mut indent = 0;
+        let mut temp = self.clone_state();
+
+        while let Some(grapheme) = temp.char_stream.current() {
+            match grapheme {
+                " " => {
+                    indent += 1;
+                    temp.advance();
+                }
+                "\t" => {
+                    let spaces_to_next_tab = 4 - (indent % 4);
+                    indent += spaces_to_next_tab;
+                    temp.advance();
+                }
+                _ => break,
+            }
+        }
+
+        indent
     }
 
     /// Checks if current character is an emphasis marker.
@@ -1628,9 +1716,15 @@ mod tests {
         let mut lexer = Lexer::new(input);
 
         let token1 = lexer.next_token().unwrap();
-        if let Token::CodeBlock { info, content } = token1 {
+        if let Token::CodeBlock {
+            info,
+            content,
+            leading_indent,
+        } = token1
+        {
             assert_eq!(info, None);
             assert_eq!(content, "code line 1");
+            assert_eq!(leading_indent, 4);
         } else {
             panic!("Expected CodeBlock token, got {:?}", token1);
         }
@@ -1638,9 +1732,15 @@ mod tests {
         let _newline = lexer.next_token().unwrap();
 
         let token2 = lexer.next_token().unwrap();
-        if let Token::CodeBlock { info, content } = token2 {
+        if let Token::CodeBlock {
+            info,
+            content,
+            leading_indent,
+        } = token2
+        {
             assert_eq!(info, None);
             assert_eq!(content, "code line 2");
+            assert_eq!(leading_indent, 4);
         } else {
             panic!("Expected CodeBlock token, got {:?}", token2);
         }
@@ -1653,10 +1753,18 @@ mod tests {
 
         // First bullet marker
         let token1 = next_non_whitespace_token(&mut lexer);
-        if let Token::ListMarker { kind, indent } = token1 {
+        if let Token::ListMarker {
+            kind,
+            indent,
+            marker_width,
+            padding,
+        } = token1
+        {
             if let ListKind::Bullet { marker } = kind {
                 assert_eq!(marker, '-');
                 assert_eq!(indent, 0);
+                assert_eq!(marker_width, 1);
+                assert_eq!(padding, 1);
             } else {
                 panic!("Expected bullet list marker");
             }
@@ -1672,10 +1780,18 @@ mod tests {
         lexer.next_token().unwrap(); // Indent
 
         let token2 = next_non_whitespace_token(&mut lexer);
-        if let Token::ListMarker { kind, indent } = token2 {
+        if let Token::ListMarker {
+            kind,
+            indent,
+            marker_width,
+            padding,
+        } = token2
+        {
             if let ListKind::Bullet { marker } = kind {
                 assert_eq!(marker, '-');
                 assert_eq!(indent, 2);
+                assert_eq!(marker_width, 1);
+                assert_eq!(padding, 1);
             } else {
                 panic!("Expected bullet list marker");
             }
@@ -2278,11 +2394,11 @@ code with ``` inside
 ````"#;
 
         let mut lexer = Lexer::new(input);
-        let mut code_blocks = Vec::new();
+        let mut code_blocks: Vec<(Option<&str>, &str)> = Vec::new();
 
         loop {
             let token = lexer.next_token().unwrap();
-            if let Token::CodeBlock { info, content } = token {
+            if let Token::CodeBlock { info, content, .. } = token {
                 code_blocks.push((info, content));
             } else if matches!(token, Token::Eof) {
                 break;
