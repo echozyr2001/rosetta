@@ -15,9 +15,10 @@ pub use codegen::{
 };
 pub use dom::DomNode;
 pub use ir::{
-    AlignmentAxis, Block, BlockId, BlockKind, ContentPayload, Dimension, InlineMark, InlineSpan,
+    AlignmentAxis, Block as WorkspaceBlock, BlockId, BlockKind, ContentPayload, Dimension,
+    InlineMark, InlineSpan,
     LayoutAlignment, LayoutMetadata, LayoutSize, MetadataMap, MetadataValue, Space, SpaceId,
-    StyleHooks, Workspace, WorkspaceId,
+    StyleHooks, Workspace, WorkspaceId, WorkspaceTransformer,
 };
 pub use error::{MarkdownError, Result};
 pub use lexer::{Lexer, Position, Token};
