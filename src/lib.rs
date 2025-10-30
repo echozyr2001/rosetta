@@ -2,6 +2,7 @@
 pub mod ast;
 pub mod codegen;
 pub mod dom;
+pub mod ir;
 pub mod error;
 pub mod lexer;
 pub mod parser;
@@ -13,6 +14,11 @@ pub use codegen::{
     CustomRenderer, HtmlGenerator, HtmlValidator, HtmlWriter, OutputConfig, OutputConfigBuilder,
 };
 pub use dom::DomNode;
+pub use ir::{
+    AlignmentAxis, Block, BlockId, BlockKind, ContentPayload, Dimension, InlineMark, InlineSpan,
+    LayoutAlignment, LayoutMetadata, LayoutSize, MetadataMap, MetadataValue, Space, SpaceId,
+    StyleHooks, Workspace, WorkspaceId,
+};
 pub use error::{MarkdownError, Result};
 pub use lexer::{Lexer, Position, Token};
 pub use parser::ParserConfig;
