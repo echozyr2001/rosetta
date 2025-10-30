@@ -412,7 +412,8 @@ mod tests {
 
         let heading_block = &space.blocks[0];
         assert_eq!(heading_block.kind.0, "heading");
-        assert_eq!(heading_block.content,
+        assert_eq!(
+            heading_block.content,
             ContentPayload::RichText(vec![InlineSpan::new("Title")])
         );
 
@@ -432,18 +433,27 @@ mod tests {
     #[test]
     fn transforms_lists_and_nested_blocks() {
         let list_item = NodeBuilder::list_item(
-            vec![NodeBuilder::paragraph(vec![NodeBuilder::text("Item".into())], None)],
+            vec![NodeBuilder::paragraph(
+                vec![NodeBuilder::text("Item".into())],
+                None,
+            )],
             false,
             Some(true),
         );
         let list = NodeBuilder::list(
-            ListKind::Ordered { start: 1, delimiter: '.' },
+            ListKind::Ordered {
+                start: 1,
+                delimiter: '.',
+            },
             true,
             vec![list_item],
             None,
         );
         let quote = NodeBuilder::blockquote(
-            vec![NodeBuilder::paragraph(vec![NodeBuilder::text("Quote".into())], None)],
+            vec![NodeBuilder::paragraph(
+                vec![NodeBuilder::text("Quote".into())],
+                None,
+            )],
             None,
         );
         let document = NodeBuilder::document(vec![list, quote]);
@@ -456,12 +466,21 @@ mod tests {
         let list_block = &space.blocks[0];
         assert_eq!(list_block.kind.0, "list");
         assert_eq!(list_block.children.len(), 1);
-        assert_eq!(list_block.metadata.get("ordered"), Some(&MetadataValue::Bool(true)));
+        assert_eq!(
+            list_block.metadata.get("ordered"),
+            Some(&MetadataValue::Bool(true))
+        );
 
         let list_item_block = &list_block.children[0];
         assert_eq!(list_item_block.kind.0, "list_item");
-        assert_eq!(list_item_block.metadata.get("task"), Some(&MetadataValue::Bool(true)));
-        assert_eq!(list_item_block.metadata.get("checked"), Some(&MetadataValue::Bool(true)));
+        assert_eq!(
+            list_item_block.metadata.get("task"),
+            Some(&MetadataValue::Bool(true))
+        );
+        assert_eq!(
+            list_item_block.metadata.get("checked"),
+            Some(&MetadataValue::Bool(true))
+        );
         assert_eq!(list_item_block.children.len(), 1);
 
         let quote_block = &space.blocks[1];
@@ -471,7 +490,11 @@ mod tests {
 
     #[test]
     fn transforms_positions_and_code_blocks() {
-        let position = Some(Position { line: 1, column: 1, offset: 0 });
+        let position = Some(Position {
+            line: 1,
+            column: 1,
+            offset: 0,
+        });
         let heading = NodeBuilder::heading(2, vec![NodeBuilder::text("A".into())], position);
         let code_block = NodeBuilder::code_block(
             Some("rust".into()),
@@ -493,8 +516,14 @@ mod tests {
         assert_eq!(code_block.kind.0, "code");
         match &code_block.content {
             ContentPayload::Data(data) => {
-                assert_eq!(data.get("language"), Some(&MetadataValue::String("rust".into())));
-                assert_eq!(data.get("code"), Some(&MetadataValue::String("fn main() {}".into())));
+                assert_eq!(
+                    data.get("language"),
+                    Some(&MetadataValue::String("rust".into()))
+                );
+                assert_eq!(
+                    data.get("code"),
+                    Some(&MetadataValue::String("fn main() {}".into()))
+                );
             }
             other => panic!("Unexpected code block payload: {:?}", other),
         }
