@@ -164,6 +164,7 @@ pub enum InlineMark {
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Default)]
 pub struct LayoutMetadata {
     pub index: Option<u32>,
     pub columns: Option<u16>,
@@ -173,21 +174,6 @@ pub struct LayoutMetadata {
     pub anchor: Option<String>,
     pub group: Option<String>,
     pub custom: MetadataMap,
-}
-
-impl Default for LayoutMetadata {
-    fn default() -> Self {
-        Self {
-            index: None,
-            columns: None,
-            rows: None,
-            size: LayoutSize::default(),
-            alignment: LayoutAlignment::default(),
-            anchor: None,
-            group: None,
-            custom: MetadataMap::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -255,22 +241,12 @@ impl Default for AlignmentAxis {
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Default)]
 pub struct StyleHooks {
     pub tokens: HashMap<String, String>,
     pub class_list: Vec<String>,
     pub inline_styles: HashMap<String, String>,
     pub custom: MetadataMap,
-}
-
-impl Default for StyleHooks {
-    fn default() -> Self {
-        Self {
-            tokens: HashMap::new(),
-            class_list: Vec::new(),
-            inline_styles: HashMap::new(),
-            custom: MetadataMap::default(),
-        }
-    }
 }
 
 pub type MetadataMap = HashMap<String, MetadataValue>;

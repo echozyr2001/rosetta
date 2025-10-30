@@ -1,4 +1,4 @@
-use crate::ast::{Block as AstBlock, Document, Inline as AstInline, ListKind, ListItem};
+use crate::ast::{Block as AstBlock, Document, Inline as AstInline, ListItem, ListKind};
 use crate::error::{MarkdownError, Result};
 
 use super::types::{
@@ -48,10 +48,9 @@ impl WorkspaceTransformer {
                 );
 
                 ir_block.layout.index = Some(index);
-                ir_block.metadata.insert(
-                    "level".into(),
-                    MetadataValue::Number(f64::from(*level)),
-                );
+                ir_block
+                    .metadata
+                    .insert("level".into(), MetadataValue::Number(f64::from(*level)));
 
                 if let Some(position) = position {
                     ir_block.metadata.insert(
@@ -154,24 +153,20 @@ impl WorkspaceTransformer {
 
                 match kind {
                     ListKind::Bullet { marker } => {
-                        ir_block.metadata.insert(
-                            "marker".into(),
-                            MetadataValue::String(marker.to_string()),
-                        );
-                        ir_block.metadata.insert(
-                            "ordered".into(),
-                            MetadataValue::Bool(false),
-                        );
+                        ir_block
+                            .metadata
+                            .insert("marker".into(), MetadataValue::String(marker.to_string()));
+                        ir_block
+                            .metadata
+                            .insert("ordered".into(), MetadataValue::Bool(false));
                     }
                     ListKind::Ordered { start, delimiter } => {
-                        ir_block.metadata.insert(
-                            "ordered".into(),
-                            MetadataValue::Bool(true),
-                        );
-                        ir_block.metadata.insert(
-                            "start".into(),
-                            MetadataValue::Number(f64::from(*start)),
-                        );
+                        ir_block
+                            .metadata
+                            .insert("ordered".into(), MetadataValue::Bool(true));
+                        ir_block
+                            .metadata
+                            .insert("start".into(), MetadataValue::Number(f64::from(*start)));
                         ir_block.metadata.insert(
                             "delimiter".into(),
                             MetadataValue::String(delimiter.to_string()),
@@ -179,10 +174,9 @@ impl WorkspaceTransformer {
                     }
                 }
 
-                ir_block.metadata.insert(
-                    "tight".into(),
-                    MetadataValue::Bool(*tight),
-                );
+                ir_block
+                    .metadata
+                    .insert("tight".into(), MetadataValue::Bool(*tight));
 
                 if let Some(position) = position {
                     ir_block.metadata.insert(
@@ -249,20 +243,17 @@ impl WorkspaceTransformer {
                 BlockKind::new("list_item"),
             );
             block.layout.index = Some(index as u32);
-            block.metadata.insert(
-                "tight".into(),
-                MetadataValue::Bool(item.tight),
-            );
+            block
+                .metadata
+                .insert("tight".into(), MetadataValue::Bool(item.tight));
 
             if let Some(checked) = item.task_list_marker {
-                block.metadata.insert(
-                    "task".into(),
-                    MetadataValue::Bool(true),
-                );
-                block.metadata.insert(
-                    "checked".into(),
-                    MetadataValue::Bool(checked),
-                );
+                block
+                    .metadata
+                    .insert("task".into(), MetadataValue::Bool(true));
+                block
+                    .metadata
+                    .insert("checked".into(), MetadataValue::Bool(checked));
             }
 
             block.children = self.transform_blocks(&item.content)?;
@@ -273,7 +264,10 @@ impl WorkspaceTransformer {
     }
 
     fn transform_inline_vec(&self, inlines: &[AstInline]) -> Vec<InlineSpan> {
-        inlines.iter().flat_map(|inline| self.transform_inline(inline)).collect()
+        inlines
+            .iter()
+            .flat_map(|inline| self.transform_inline(inline))
+            .collect()
     }
 
     fn transform_inline(&self, inline: &AstInline) -> Vec<InlineSpan> {
@@ -311,15 +305,11 @@ impl WorkspaceTransformer {
                 .into_iter()
                 .map(|mut span| {
                     span.marks.push(InlineMark::Link);
-                    span.metadata.insert(
-                        "href".into(),
-                        MetadataValue::String(destination.clone()),
-                    );
+                    span.metadata
+                        .insert("href".into(), MetadataValue::String(destination.clone()));
                     if let Some(title) = title {
-                        span.metadata.insert(
-                            "title".into(),
-                            MetadataValue::String(title.clone()),
-                        );
+                        span.metadata
+                            .insert("title".into(), MetadataValue::String(title.clone()));
                     }
                     span
                 })
@@ -331,15 +321,11 @@ impl WorkspaceTransformer {
                 title,
             } => {
                 let mut span = InlineSpan::new(alt.clone());
-                span.metadata.insert(
-                    "src".into(),
-                    MetadataValue::String(destination.clone()),
-                );
+                span.metadata
+                    .insert("src".into(), MetadataValue::String(destination.clone()));
                 if let Some(title) = title {
-                    span.metadata.insert(
-                        "title".into(),
-                        MetadataValue::String(title.clone()),
-                    );
+                    span.metadata
+                        .insert("title".into(), MetadataValue::String(title.clone()));
                 }
                 span.marks.push(InlineMark::Custom("image".into()));
                 vec![span]
@@ -361,8 +347,14 @@ impl WorkspaceTransformer {
 fn position_metadata(position: &crate::lexer::Position) -> MetadataMap {
     let mut map = MetadataMap::default();
     map.insert("line".into(), MetadataValue::Number(position.line as f64));
-    map.insert("column".into(), MetadataValue::Number(position.column as f64));
-    map.insert("offset".into(), MetadataValue::Number(position.offset as f64));
+    map.insert(
+        "column".into(),
+        MetadataValue::Number(position.column as f64),
+    );
+    map.insert(
+        "offset".into(),
+        MetadataValue::Number(position.offset as f64),
+    );
     map
 }
 
