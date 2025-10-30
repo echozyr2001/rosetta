@@ -5,6 +5,11 @@
 use crate::error::Result;
 use unicode_segmentation::{GraphemeIndices, UnicodeSegmentation};
 
+// Nom-based lexer implementation lives at the end of this file.
+// We expose it here so callers can begin experimenting while we
+// transition away from the hand-rolled lexer.
+pub use nom_lexer::NomLexer;
+
 /// Represents the position of a token in the source text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Position {
@@ -185,6 +190,8 @@ pub enum ListKind {
 pub struct Lexer<'input> {
     char_stream: CharStream<'input>,
 }
+
+mod nom_lexer;
 
 impl<'input> Lexer<'input> {
     /// Creates a new lexer for the given input string.
