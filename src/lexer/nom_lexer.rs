@@ -1,10 +1,10 @@
+use nom::IResult;
 use nom::branch::alt;
 use nom::bytes::complete::{is_not, tag, take_while1};
 use nom::character::complete::{char, digit1, line_ending, not_line_ending, space0};
 use nom::combinator::{map, opt, recognize};
 use nom::multi::many1;
 use nom::sequence::{pair, tuple};
-use nom::IResult;
 
 use super::{ListKind, Token};
 
@@ -87,7 +87,10 @@ fn parse_newline(input: &str) -> IResult<&str, Token<'_>> {
 }
 
 fn parse_whitespace(input: &str) -> IResult<&str, Token<'_>> {
-    map(take_while1(|c: char| c == ' ' || c == '\t'), Token::Whitespace)(input)
+    map(
+        take_while1(|c: char| c == ' ' || c == '\t'),
+        Token::Whitespace,
+    )(input)
 }
 
 fn parse_atx_heading(input: &str) -> IResult<&str, Token<'_>> {
@@ -120,7 +123,13 @@ fn parse_thematic_break(input: &str) -> IResult<&str, Token<'_>> {
 
 fn parse_code_fence(input: &str) -> IResult<&str, Token<'_>> {
     map(
-        tuple((tag("```"), opt(not_line_ending), line_ending, take_while1(|c| c != '`'), tag("```"))),
+        tuple((
+            tag("```"),
+            opt(not_line_ending),
+            line_ending,
+            take_while1(|c| c != '`'),
+            tag("```"),
+        )),
         |(_, info, _, body, _)| Token::CodeBlock {
             info,
             content: body,
@@ -140,14 +149,17 @@ fn parse_bullet_marker(input: &str) -> IResult<&str, Token<'_>> {
 }
 
 fn parse_ordered_marker(input: &str) -> IResult<&str, Token<'_>> {
-    map(tuple((digit1::<&str, nom::error::Error<&str>>, opt(char('.')))), |(digits, delimiter)| {
-        let start = digits.parse().unwrap_or(1);
-        let delimiter = delimiter.unwrap_or('.');
-        Token::ListMarker {
-            kind: ListKind::Ordered { start, delimiter },
-            indent: 0,
-        }
-    })(input)
+    map(
+        tuple((digit1::<&str, nom::error::Error<&str>>, opt(char('.')))),
+        |(digits, delimiter)| {
+            let start = digits.parse().unwrap_or(1);
+            let delimiter = delimiter.unwrap_or('.');
+            Token::ListMarker {
+                kind: ListKind::Ordered { start, delimiter },
+                indent: 0,
+            }
+        },
+    )(input)
 }
 
 #[cfg(test)]
@@ -172,7 +184,9 @@ mod tests {
         let mut lexer = NomLexer::new(input);
         let tokens = collect_tokens(&mut lexer);
 
-        assert!(matches!(tokens[0], Token::AtxHeading { level: 1, content } if content == "Heading"));
+        assert!(
+            matches!(tokens[0], Token::AtxHeading { level: 1, content } if content == "Heading")
+        );
         assert!(matches!(tokens[1], Token::Newline));
         assert!(matches!(tokens[2], Token::Text("Paragraph")));
     }
@@ -183,7 +197,13 @@ mod tests {
         let mut lexer = NomLexer::new(input);
         let tokens = collect_tokens(&mut lexer);
 
-        assert!(matches!(tokens[0], Token::ListMarker { kind: ListKind::Bullet { marker: '-' }, indent: 0 }));
+        assert!(matches!(
+            tokens[0],
+            Token::ListMarker {
+                kind: ListKind::Bullet { marker: '-' },
+                indent: 0
+            }
+        ));
         assert!(matches!(tokens[1], Token::Whitespace(" ")));
         assert!(matches!(tokens[2], Token::Text("item")));
     }
@@ -194,7 +214,16 @@ mod tests {
         let mut lexer = NomLexer::new(input);
         let tokens = collect_tokens(&mut lexer);
 
-        assert!(matches!(tokens[0], Token::ListMarker { kind: ListKind::Ordered { start: 2, delimiter: '.' }, indent: 0 }));
+        assert!(matches!(
+            tokens[0],
+            Token::ListMarker {
+                kind: ListKind::Ordered {
+                    start: 2,
+                    delimiter: '.'
+                },
+                indent: 0
+            }
+        ));
         assert!(matches!(tokens[1], Token::Whitespace(" ")));
         assert!(matches!(tokens[2], Token::Text("item")));
     }
