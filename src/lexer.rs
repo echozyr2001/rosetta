@@ -5,6 +5,8 @@
 use crate::error::Result;
 use unicode_segmentation::{GraphemeIndices, UnicodeSegmentation};
 
+mod token;
+
 /// Represents the position of a token in the source text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Position {
