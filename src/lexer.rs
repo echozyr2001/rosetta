@@ -5,6 +5,7 @@
 use crate::error::Result;
 use unicode_segmentation::{GraphemeIndices, UnicodeSegmentation};
 
+// Flattened CommonMark token definitions with rich metadata live here.
 mod token;
 
 /// Represents the position of a token in the source text.
