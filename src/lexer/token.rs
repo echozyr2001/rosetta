@@ -3,10 +3,6 @@
 /// described by the CommonMark 0.31.2 specification. This design keeps the
 /// lexical layer focused on syntactic markers and defers block aggregation to
 /// the parser/IR pipeline.
-use super::ListKind;
-
-/// Every token the lexer can yield, annotated with the CommonMark section
-/// that motivates the variant.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token<'input> {
     /// ATX heading marker like `## Section` (CommonMark §4.2).
@@ -65,52 +61,6 @@ pub enum Token<'input> {
     Eof,
 }
 
-/// Plain text lexeme emitted by the lexer (CommonMark §6).
-#[derive(Debug, Clone, PartialEq)]
-pub struct TextToken<'input> {
-    pub lexeme: &'input str,
-}
-
-/// Runs of spaces or tabs (CommonMark §2.1).
-#[derive(Debug, Clone, PartialEq)]
-pub struct WhitespaceToken<'input> {
-    pub lexeme: &'input str,
-    pub contains_tab: bool,
-}
-
-/// Soft line break token (CommonMark §6.9).
-#[derive(Debug, Clone, PartialEq)]
-pub struct SoftBreakToken;
-
-/// Hard line break token (CommonMark §6.8).
-#[derive(Debug, Clone, PartialEq)]
-pub struct HardBreakToken;
-
-/// Escaped character (CommonMark §6.1).
-#[derive(Debug, Clone, PartialEq)]
-pub struct EscapeSequenceToken {
-    pub escaped: char,
-}
-
-/// Inline punctuation marker (CommonMark §6).
-#[derive(Debug, Clone, PartialEq)]
-pub struct PunctuationToken {
-    pub ch: char,
-}
-
-/// Line ending token (CommonMark §2.2).
-#[derive(Debug, Clone, PartialEq)]
-pub struct LineEndingToken {
-    pub kind: LineEndingKind,
-}
-
-/// Indentation encountered at the start of a line (CommonMark §2.1).
-#[derive(Debug, Clone, PartialEq)]
-pub struct IndentToken {
-    pub visual_width: usize,
-    pub contains_tab: bool,
-}
-
 /// ATX heading lexeme (CommonMark §4.2).
 #[derive(Debug, Clone, PartialEq)]
 pub struct AtxHeadingToken<'input> {
@@ -150,6 +100,13 @@ pub struct BlockQuoteToken {
     pub depth: usize,
     pub marker_offset: usize,
     pub spaces_after_marker: usize,
+}
+
+/// Types of list markers.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ListKind {
+    Bullet { marker: char },
+    Ordered { start: u32, delimiter: char },
 }
 
 /// List item marker (CommonMark §5.2).
@@ -196,6 +153,27 @@ pub struct LinkReferenceDefinitionToken<'input> {
     pub title: Option<&'input str>,
     pub marker_offset: usize,
 }
+
+/// Plain text lexeme emitted by the lexer (CommonMark §6).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextToken<'input> {
+    pub lexeme: &'input str,
+}
+
+/// Runs of spaces or tabs (CommonMark §2.1).
+#[derive(Debug, Clone, PartialEq)]
+pub struct WhitespaceToken<'input> {
+    pub lexeme: &'input str,
+    pub contains_tab: bool,
+}
+
+/// Soft line break token (CommonMark §6.9).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SoftBreakToken;
+
+/// Hard line break token (CommonMark §6.8).
+#[derive(Debug, Clone, PartialEq)]
+pub struct HardBreakToken;
 
 /// Whether an emphasis delimiter can open/close (CommonMark §6.4).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -248,6 +226,12 @@ pub struct EntityToken<'input> {
     pub resolved: Option<char>,
 }
 
+/// Escaped character (CommonMark §6.1).
+#[derive(Debug, Clone, PartialEq)]
+pub struct EscapeSequenceToken {
+    pub escaped: char,
+}
+
 /// Raw inline HTML chunk (CommonMark §6.7).
 #[derive(Debug, Clone, PartialEq)]
 pub struct HtmlInlineToken<'input> {
@@ -283,4 +267,23 @@ pub enum LineEndingKind {
     LineFeed,
     CarriageReturn,
     CarriageReturnLineFeed,
+}
+
+/// Line ending token (CommonMark §2.2).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LineEndingToken {
+    pub kind: LineEndingKind,
+}
+
+/// Indentation encountered at the start of a line (CommonMark §2.1).
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndentToken {
+    pub visual_width: usize,
+    pub contains_tab: bool,
+}
+
+/// Inline punctuation marker (CommonMark §6).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PunctuationToken {
+    pub ch: char,
 }
