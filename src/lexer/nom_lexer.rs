@@ -1228,4 +1228,243 @@ mod tests {
             "Byte offset should match input length"
         );
     }
+
+    #[test]
+    fn parses_blockquotes() {
+        let input = "> This is a blockquote\n> Second line";
+        let mut lexer = NomLexer::new(input);
+        let tokens = collect_tokens(&mut lexer);
+
+        // Should have blockquote markers
+        let blockquote_count = tokens
+            .iter()
+            .filter(|t| matches!(t, Token::BlockQuote(_)))
+            .count();
+        assert!(blockquote_count >= 2, "Should parse multiple blockquote markers");
+    }
+
+    #[test]
+    fn parses_code_blocks() {
+        let input = "```rust\nfn main() {}\n```";
+        let mut lexer = NomLexer::new(input);
+        let tokens = collect_tokens(&mut lexer);
+
+        let code_blocks: Vec<_> = tokens
+            .iter()
+            .filter_map(|t| match t {
+                Token::CodeBlock(cb) => Some(cb),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(code_blocks.len(), 1, "Should parse one code block");
+        assert_eq!(code_blocks[0].info_string, Some("rust"));
+        assert!(code_blocks[0].raw_content.contains("fn main()"));
+    }
+
+    #[test]
+    fn parses_whitespace() {
+        // Test whitespace at start of line (should be parsed as indent)
+        let input = "   \t  ";
+        let mut lexer = NomLexer::new(input);
+        let tokens = collect_tokens(&mut lexer);
+
+        let indent_tokens: Vec<_> = tokens
+            .iter()
+            .filter_map(|t| match t {
+                Token::Indent(indent) => Some(indent),
+                _ => None,
+            })
+            .collect();
+
+        assert!(!indent_tokens.is_empty(), "Should parse indentation tokens");
+        assert!(
+            indent_tokens.iter().any(|indent| indent.contains_tab),
+            "Should detect tab character in indentation"
+        );
+
+        // Test whitespace within a line (after some content)
+        let input2 = "word\n   \t  more";
+        let mut lexer2 = NomLexer::new(input2);
+        let tokens2 = collect_tokens(&mut lexer2);
+
+        let has_indent = tokens2.iter().any(|t| matches!(t, Token::Indent(_)));
+        assert!(has_indent, "Should parse indentation after newline");
+    }
+
+    #[test]
+    fn parses_html_inline() {
+        let input = "<em>emphasis</em> and <strong>strong</strong>";
+        let mut lexer = NomLexer::new(input);
+        let tokens = collect_tokens(&mut lexer);
+
+        let html_tokens: Vec<_> = tokens
+            .iter()
+            .filter_map(|t| match t {
+                Token::HtmlInline(html) => Some(html),
+                _ => None,
+            })
+            .collect();
+
+        assert!(!html_tokens.is_empty(), "Should parse HTML inline tokens");
+    }
+
+    #[test]
+    fn parses_line_endings() {
+        let input = "line1\nline2\r\nline3\r";
+        let mut lexer = NomLexer::new(input);
+        let tokens = collect_tokens(&mut lexer);
+
+        let line_endings: Vec<_> = tokens
+            .iter()
+            .filter_map(|t| match t {
+                Token::LineEnding(le) => Some(le.kind),
+                _ => None,
+            })
+            .collect();
+
+        assert!(!line_endings.is_empty(), "Should parse line endings");
+        // Should handle different line ending types
+        assert!(line_endings.contains(&LineEndingKind::LineFeed));
+    }
+
+    #[test]
+    fn handles_malformed_input() {
+        // Test unclosed code spans
+        let input = "`unclosed code span";
+        let mut lexer = NomLexer::new(input);
+        let tokens = collect_tokens(&mut lexer);
+        assert!(!tokens.is_empty(), "Should handle unclosed code spans gracefully");
+
+        // Test invalid HTML
+        let input2 = "<invalid html";
+        let mut lexer2 = NomLexer::new(input2);
+        let tokens2 = collect_tokens(&mut lexer2);
+        assert!(!tokens2.is_empty(), "Should handle invalid HTML gracefully");
+
+        // Test incomplete autolinks
+        let input3 = "<incomplete@";
+        let mut lexer3 = NomLexer::new(input3);
+        let tokens3 = collect_tokens(&mut lexer3);
+        assert!(!tokens3.is_empty(), "Should handle incomplete autolinks gracefully");
+    }
+
+    #[test]
+    fn handles_empty_and_whitespace_only_input() {
+        // Empty input
+        let mut lexer = NomLexer::new("");
+        let tokens = collect_tokens(&mut lexer);
+        assert_eq!(tokens.len(), 1);
+        assert!(matches!(tokens[0], Token::Eof));
+
+        // Whitespace only
+        let mut lexer2 = NomLexer::new("   ");
+        let tokens2 = collect_tokens(&mut lexer2);
+        assert!(tokens2.iter().any(|t| matches!(t, Token::Indent(_))));
+
+        // Newlines only
+        let mut lexer3 = NomLexer::new("\n\n\n");
+        let tokens3 = collect_tokens(&mut lexer3);
+        let newline_count = tokens3
+            .iter()
+            .filter(|t| matches!(t, Token::LineEnding(_)))
+            .count();
+        assert_eq!(newline_count, 3);
+    }
+
+    #[test]
+    fn handles_complex_unicode_sequences() {
+        // Test various Unicode categories
+        let test_cases = vec![
+            ("café", "accented characters"),
+            ("🌍🎉", "multiple emojis"),
+            ("👨‍💻", "profession emoji"),
+            ("🏳️‍⚧️", "transgender flag"),
+            ("नमस्ते", "Devanagari script"),
+            ("こんにちは", "Japanese hiragana"),
+            ("🇺🇸", "flag emoji"),
+        ];
+
+        for (input, description) in test_cases {
+            let mut lexer = NomLexer::new(input);
+            let tokens = collect_tokens(&mut lexer);
+            
+            assert!(!tokens.is_empty(), "Should parse {}", description);
+            assert!(matches!(tokens.last(), Some(Token::Eof)), "Should end with EOF for {}", description);
+            
+            // Position tracking should work correctly
+            let final_pos = lexer.position();
+            assert_eq!(final_pos.offset, input.len(), "Byte offset should match input length for {}", description);
+        }
+    }
+
+    #[test]
+    fn test_is_at_end_functionality() {
+        let input = "short";
+        let mut lexer = NomLexer::new(input);
+        
+        assert!(!lexer.is_at_end(), "Should not be at end initially");
+        
+        // Consume all tokens
+        while let Some(token) = lexer.next_token() {
+            if matches!(token, Token::Eof) {
+                break;
+            }
+        }
+        
+        assert!(lexer.is_at_end(), "Should be at end after consuming all input");
+    }
+
+    #[test]
+    fn test_position_consistency() {
+        let input = "line1\nline2\nline3";
+        let mut lexer = NomLexer::new(input);
+        let mut positions = Vec::new();
+        
+        // Collect positions as we parse
+        while let Some(token) = lexer.next_token() {
+            positions.push(lexer.position());
+            if matches!(token, Token::Eof) {
+                break;
+            }
+        }
+        
+        // Positions should be monotonically increasing in offset
+        for window in positions.windows(2) {
+            assert!(
+                window[1].offset >= window[0].offset,
+                "Positions should be monotonically increasing"
+            );
+        }
+        
+        // Final position should match input length
+        assert_eq!(
+            positions.last().unwrap().offset,
+            input.len(),
+            "Final position should match input length"
+        );
+    }
+
+    #[test]
+    fn test_clone_and_peek_consistency() {
+        let input = "# Heading\n- List\n`code`";
+        let lexer = NomLexer::new(input);
+        
+        // Clone should create identical lexer
+        let mut lexer1 = lexer.clone();
+        let mut lexer2 = lexer.clone();
+        
+        // Both should produce identical token sequences
+        let tokens1 = collect_tokens(&mut lexer1);
+        let tokens2 = collect_tokens(&mut lexer2);
+        
+        assert_eq!(tokens1, tokens2, "Cloned lexers should produce identical tokens");
+        
+        // Peek should not affect subsequent parsing
+        let mut lexer3 = lexer.clone();
+        let peeked = lexer3.peek_token();
+        let first_actual = lexer3.next_token();
+        
+        assert_eq!(peeked, first_actual, "Peek should match first actual token");
+    }
 }
