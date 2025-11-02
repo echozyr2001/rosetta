@@ -1240,7 +1240,10 @@ mod tests {
             .iter()
             .filter(|t| matches!(t, Token::BlockQuote(_)))
             .count();
-        assert!(blockquote_count >= 2, "Should parse multiple blockquote markers");
+        assert!(
+            blockquote_count >= 2,
+            "Should parse multiple blockquote markers"
+        );
     }
 
     #[test]
@@ -1334,7 +1337,10 @@ mod tests {
         let input = "`unclosed code span";
         let mut lexer = NomLexer::new(input);
         let tokens = collect_tokens(&mut lexer);
-        assert!(!tokens.is_empty(), "Should handle unclosed code spans gracefully");
+        assert!(
+            !tokens.is_empty(),
+            "Should handle unclosed code spans gracefully"
+        );
 
         // Test invalid HTML
         let input2 = "<invalid html";
@@ -1346,7 +1352,10 @@ mod tests {
         let input3 = "<incomplete@";
         let mut lexer3 = NomLexer::new(input3);
         let tokens3 = collect_tokens(&mut lexer3);
-        assert!(!tokens3.is_empty(), "Should handle incomplete autolinks gracefully");
+        assert!(
+            !tokens3.is_empty(),
+            "Should handle incomplete autolinks gracefully"
+        );
     }
 
     #[test]
@@ -1388,13 +1397,22 @@ mod tests {
         for (input, description) in test_cases {
             let mut lexer = NomLexer::new(input);
             let tokens = collect_tokens(&mut lexer);
-            
+
             assert!(!tokens.is_empty(), "Should parse {}", description);
-            assert!(matches!(tokens.last(), Some(Token::Eof)), "Should end with EOF for {}", description);
-            
+            assert!(
+                matches!(tokens.last(), Some(Token::Eof)),
+                "Should end with EOF for {}",
+                description
+            );
+
             // Position tracking should work correctly
             let final_pos = lexer.position();
-            assert_eq!(final_pos.offset, input.len(), "Byte offset should match input length for {}", description);
+            assert_eq!(
+                final_pos.offset,
+                input.len(),
+                "Byte offset should match input length for {}",
+                description
+            );
         }
     }
 
@@ -1402,17 +1420,20 @@ mod tests {
     fn test_is_at_end_functionality() {
         let input = "short";
         let mut lexer = NomLexer::new(input);
-        
+
         assert!(!lexer.is_at_end(), "Should not be at end initially");
-        
+
         // Consume all tokens
         while let Some(token) = lexer.next_token() {
             if matches!(token, Token::Eof) {
                 break;
             }
         }
-        
-        assert!(lexer.is_at_end(), "Should be at end after consuming all input");
+
+        assert!(
+            lexer.is_at_end(),
+            "Should be at end after consuming all input"
+        );
     }
 
     #[test]
@@ -1420,7 +1441,7 @@ mod tests {
         let input = "line1\nline2\nline3";
         let mut lexer = NomLexer::new(input);
         let mut positions = Vec::new();
-        
+
         // Collect positions as we parse
         while let Some(token) = lexer.next_token() {
             positions.push(lexer.position());
@@ -1428,7 +1449,7 @@ mod tests {
                 break;
             }
         }
-        
+
         // Positions should be monotonically increasing in offset
         for window in positions.windows(2) {
             assert!(
@@ -1436,7 +1457,7 @@ mod tests {
                 "Positions should be monotonically increasing"
             );
         }
-        
+
         // Final position should match input length
         assert_eq!(
             positions.last().unwrap().offset,
@@ -1449,22 +1470,25 @@ mod tests {
     fn test_clone_and_peek_consistency() {
         let input = "# Heading\n- List\n`code`";
         let lexer = NomLexer::new(input);
-        
+
         // Clone should create identical lexer
         let mut lexer1 = lexer.clone();
         let mut lexer2 = lexer.clone();
-        
+
         // Both should produce identical token sequences
         let tokens1 = collect_tokens(&mut lexer1);
         let tokens2 = collect_tokens(&mut lexer2);
-        
-        assert_eq!(tokens1, tokens2, "Cloned lexers should produce identical tokens");
-        
+
+        assert_eq!(
+            tokens1, tokens2,
+            "Cloned lexers should produce identical tokens"
+        );
+
         // Peek should not affect subsequent parsing
         let mut lexer3 = lexer.clone();
         let peeked = lexer3.peek_token();
         let first_actual = lexer3.next_token();
-        
+
         assert_eq!(peeked, first_actual, "Peek should match first actual token");
     }
 }
