@@ -107,12 +107,12 @@ impl<'input> NomLexer<'input> {
         }
 
         // Indentation at start of line
-        if self.is_at_line_start() {
-            if let Ok((remaining, token)) = parse_indent(current) {
-                let consumed = current.len() - remaining.len();
-                self.update_position(consumed);
-                return Some(token);
-            }
+        if self.is_at_line_start()
+            && let Ok((remaining, token)) = parse_indent(current)
+        {
+            let consumed = current.len() - remaining.len();
+            self.update_position(consumed);
+            return Some(token);
         }
 
         // Block-level constructs (only at line start or after indentation)
