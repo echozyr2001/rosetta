@@ -19,6 +19,7 @@ num_cpus = "1.16"
 
 # Optional dependencies for different features
 serde = { version = "1.0", optional = true, features = ["derive"] }
+nom = { version = "7.1", features = ["alloc"] }
 
 [dev-dependencies]
 # Benchmarking and testing
