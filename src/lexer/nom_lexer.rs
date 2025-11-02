@@ -1159,25 +1159,25 @@ mod tests {
 
     #[test]
     fn compare_unicode_handling_with_grapheme_lexer() {
-        // 测试单个 grapheme 的处理，确保两个 lexer 都正确处理 Unicode
+        // Test single grapheme handling to ensure both lexers correctly process Unicode
         let test_cases = vec![
-            ("🌍", 4, 1),  // 简单 emoji
-            ("👨‍👩‍👧‍👦", 25, 1), // 复合 emoji
-            ("🏳️‍🌈", 14, 1), // 彩虹旗 emoji
+            ("🌍", 4, 1),  // Simple emoji
+            ("👨‍👩‍👧‍👦", 25, 1), // Complex emoji
+            ("🏳️‍🌈", 14, 1), // Rainbow flag emoji
         ];
 
         for (input, _expected_bytes, _expected_graphemes) in test_cases {
             println!("\n=== Testing Unicode handling for: {:?} ===", input);
 
-            // NomLexer - 消费整个 token
+            // NomLexer - consumes entire token
             let mut nom_lexer = NomLexer::new(input);
             let _token = nom_lexer.next_token().unwrap();
             let nom_pos = nom_lexer.position();
 
-            // 手工 Lexer - 消费单个 grapheme
+            // Manual Lexer - consumes single grapheme
             use crate::lexer::CharStream;
             let mut char_stream = CharStream::new(input);
-            char_stream.advance(); // 只前进一个 grapheme
+            char_stream.advance(); // Advance by one grapheme only
             let grapheme_pos = char_stream.position();
 
             println!(
@@ -1191,8 +1191,8 @@ mod tests {
                 grapheme_pos
             );
 
-            // 对于单个复杂 Unicode 字符，两者的列位置应该相同
-            // 因为 NomLexer 会将整个字符作为一个 token，CharStream 前进一个 grapheme
+            // For single complex Unicode characters, both should have the same column position
+            // because NomLexer treats the entire character as one token, CharStream advances one grapheme
             assert_eq!(
                 nom_pos.column, grapheme_pos.column,
                 "Both should advance column by 1 for single Unicode grapheme: {}",
@@ -1208,7 +1208,7 @@ mod tests {
 
     #[test]
     fn test_grapheme_based_unicode_handling() {
-        let complex_emoji = "👨‍👩‍👧‍👦"; // 复合家庭 emoji
+        let complex_emoji = "👨‍👩‍👧‍👦"; // Complex family emoji
 
         let mut lexer = NomLexer::new(complex_emoji);
         let _token = lexer.next_token().unwrap();
@@ -1217,7 +1217,7 @@ mod tests {
         println!("Complex emoji: {:?}", complex_emoji);
         println!("Position: {:?}", pos);
 
-        // 应该将复合 emoji 视为单个视觉单元
+        // Should treat complex emoji as single visual unit
         assert_eq!(
             pos.column, 2,
             "Should treat complex emoji as single visual unit"
