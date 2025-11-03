@@ -23,9 +23,11 @@ impl<'input> NomParser<'input> {
     pub fn new(input: &'input str, config: ParserConfig) -> Self {
         let mut lexer = NomLexer::new(input);
         let current_token = lexer.next_token();
-        
+
         let error_handler: Box<dyn ErrorHandler> = if let Some(max_errors) = config.max_errors {
-            Box::new(crate::error::DefaultErrorHandler::with_max_errors(max_errors))
+            Box::new(crate::error::DefaultErrorHandler::with_max_errors(
+                max_errors,
+            ))
         } else {
             Box::new(crate::error::DefaultErrorHandler::new())
         };
@@ -75,7 +77,9 @@ impl<'input> NomParser<'input> {
     }
 
     /// Returns a reference to the collected reference definitions.
-    pub fn reference_definitions(&self) -> &std::collections::HashMap<String, crate::ast::LinkReference> {
+    pub fn reference_definitions(
+        &self,
+    ) -> &std::collections::HashMap<String, crate::ast::LinkReference> {
         &self.reference_definitions
     }
 
@@ -191,7 +195,7 @@ impl<'input> NomParser<'input> {
     fn parse_block(&mut self) -> Result<Block> {
         // Clone the token to avoid borrowing issues
         let current_token = self.current_token.clone();
-        
+
         match current_token {
             Some(nom_token::Token::AtxHeading(heading)) => self.parse_atx_heading(&heading),
             Some(nom_token::Token::SetextHeading(heading)) => self.parse_setext_heading(&heading),
@@ -212,7 +216,7 @@ impl<'input> NomParser<'input> {
         let position = Some(self.position());
         let level = heading.level;
         let content_text = heading.raw_content.trim();
-        
+
         self.advance()?; // consume the heading token
 
         // Parse the heading content as inline elements
@@ -227,10 +231,13 @@ impl<'input> NomParser<'input> {
     }
 
     /// Parses a Setext heading.
-    fn parse_setext_heading(&mut self, heading: &nom_token::SetextHeadingToken<'input>) -> Result<Block> {
+    fn parse_setext_heading(
+        &mut self,
+        heading: &nom_token::SetextHeadingToken<'input>,
+    ) -> Result<Block> {
         let position = Some(self.position());
         let level = heading.level;
-        
+
         self.advance()?; // consume the setext heading token
 
         // For Setext headings, we need the text from the previous line
@@ -246,13 +253,17 @@ impl<'input> NomParser<'input> {
     }
 
     /// Parses a code block.
-    fn parse_code_block(&mut self, code_block: &nom_token::CodeBlockToken<'input>) -> Result<Block> {
+    fn parse_code_block(
+        &mut self,
+        code_block: &nom_token::CodeBlockToken<'input>,
+    ) -> Result<Block> {
         let position = Some(self.position());
-        
+
         self.advance()?; // consume the code block token
 
         // Extract language from info string if present
-        let language = code_block.info_string
+        let language = code_block
+            .info_string
             .and_then(|info| info.split_whitespace().next().map(|s| s.to_string()));
 
         Ok(Block::CodeBlock {
@@ -266,7 +277,7 @@ impl<'input> NomParser<'input> {
     /// Parses a blockquote.
     fn parse_blockquote(&mut self, _blockquote: &nom_token::BlockQuoteToken) -> Result<Block> {
         let position = Some(self.position());
-        
+
         self.advance()?; // consume the blockquote marker
 
         let mut content = Vec::new();
@@ -316,9 +327,10 @@ impl<'input> NomParser<'input> {
         // Convert nom token ListKind to AST ListKind
         let list_kind = match &first_marker.marker {
             nom_token::ListKind::Bullet { marker } => ListKind::Bullet { marker: *marker },
-            nom_token::ListKind::Ordered { start, delimiter } => {
-                ListKind::Ordered { start: *start, delimiter: *delimiter }
-            }
+            nom_token::ListKind::Ordered { start, delimiter } => ListKind::Ordered {
+                start: *start,
+                delimiter: *delimiter,
+            },
         };
 
         // Parse list items
@@ -329,11 +341,11 @@ impl<'input> NomParser<'input> {
                 }
                 _ => false,
             };
-            
+
             if !should_continue {
                 break;
             }
-            
+
             let item = self.parse_list_item()?;
             items.push(item);
 
@@ -364,7 +376,10 @@ impl<'input> NomParser<'input> {
         }
 
         // Parse the first line of the list item
-        if !matches!(self.current_token, Some(nom_token::Token::LineEnding(_)) | Some(nom_token::Token::Eof)) {
+        if !matches!(
+            self.current_token,
+            Some(nom_token::Token::LineEnding(_)) | Some(nom_token::Token::Eof)
+        ) {
             let block = self.parse_block()?;
             content.push(block);
         }
@@ -376,7 +391,9 @@ impl<'input> NomParser<'input> {
             // Check if next line is indented (continuation of list item)
             if matches!(self.current_token, Some(nom_token::Token::Indent(_))) {
                 self.advance()?; // consume indentation
-                if !self.is_at_end() && !matches!(self.current_token, Some(nom_token::Token::ListMarker(_))) {
+                if !self.is_at_end()
+                    && !matches!(self.current_token, Some(nom_token::Token::ListMarker(_)))
+                {
                     let block = self.parse_block()?;
                     content.push(block);
                 }
@@ -396,16 +413,19 @@ impl<'input> NomParser<'input> {
     /// Parses a thematic break.
     fn parse_thematic_break(&mut self) -> Result<Block> {
         let position = Some(self.position());
-        
+
         self.advance()?; // consume the thematic break token
 
         Ok(Block::ThematicBreak { position })
     }
 
     /// Parses an HTML block.
-    fn parse_html_block(&mut self, html_block: &nom_token::HtmlBlockToken<'input>) -> Result<Block> {
+    fn parse_html_block(
+        &mut self,
+        html_block: &nom_token::HtmlBlockToken<'input>,
+    ) -> Result<Block> {
         let position = Some(self.position());
-        
+
         self.advance()?; // consume the HTML block token
 
         Ok(Block::HtmlBlock {
@@ -423,7 +443,7 @@ impl<'input> NomParser<'input> {
         while !self.is_at_end() && !self.is_paragraph_boundary() {
             // Clone the current token to avoid borrowing issues
             let current_token = self.current_token.clone();
-            
+
             match current_token {
                 Some(nom_token::Token::Text(text_token)) => {
                     let inlines = self.parse_text_as_inlines(text_token.lexeme)?;
@@ -497,9 +517,12 @@ impl<'input> NomParser<'input> {
     }
 
     /// Parses an emphasis delimiter into an emphasis inline.
-    fn parse_emphasis_delimiter(&mut self, emphasis: &nom_token::EmphasisDelimiterToken) -> Result<Inline> {
+    fn parse_emphasis_delimiter(
+        &mut self,
+        emphasis: &nom_token::EmphasisDelimiterToken,
+    ) -> Result<Inline> {
         let strong = emphasis.run_length >= 2;
-        
+
         self.advance()?; // consume opening delimiter
 
         let mut content = Vec::new();
@@ -511,9 +534,10 @@ impl<'input> NomParser<'input> {
                     content.push(Inline::Text(text_token.lexeme.to_string()));
                     self.advance()?;
                 }
-                Some(nom_token::Token::EmphasisDelimiter(closing_emphasis)) 
-                    if closing_emphasis.marker == emphasis.marker && 
-                       closing_emphasis.run_length >= emphasis.run_length => {
+                Some(nom_token::Token::EmphasisDelimiter(closing_emphasis))
+                    if closing_emphasis.marker == emphasis.marker
+                        && closing_emphasis.run_length >= emphasis.run_length =>
+                {
                     self.advance()?; // consume closing delimiter
                     break;
                 }
@@ -551,7 +575,8 @@ impl<'input> NomParser<'input> {
         self.advance()?; // consume entity token
 
         // In a full implementation, this would resolve the entity to a character
-        let resolved_text = entity.resolved
+        let resolved_text = entity
+            .resolved
             .map(|c| c.to_string())
             .unwrap_or_else(|| format!("&{}", entity.raw));
 
@@ -575,11 +600,20 @@ impl<'input> NomParser<'input> {
     }
 
     /// Checks if two list markers match (same type).
-    fn list_markers_match(&self, marker1: &nom_token::ListKind, marker2: &nom_token::ListKind) -> bool {
+    fn list_markers_match(
+        &self,
+        marker1: &nom_token::ListKind,
+        marker2: &nom_token::ListKind,
+    ) -> bool {
         matches!(
             (marker1, marker2),
-            (nom_token::ListKind::Bullet { .. }, nom_token::ListKind::Bullet { .. })
-                | (nom_token::ListKind::Ordered { .. }, nom_token::ListKind::Ordered { .. })
+            (
+                nom_token::ListKind::Bullet { .. },
+                nom_token::ListKind::Bullet { .. }
+            ) | (
+                nom_token::ListKind::Ordered { .. },
+                nom_token::ListKind::Ordered { .. }
+            )
         )
     }
 
@@ -621,10 +655,11 @@ impl ParagraphBuilder {
 
     fn push_inline(&mut self, inline: Inline) {
         // Skip empty text inlines
-        if let Inline::Text(text) = &inline {
-            if text.trim().is_empty() && !self.has_content {
-                return;
-            }
+        if let Inline::Text(text) = &inline
+            && text.trim().is_empty()
+            && !self.has_content
+        {
+            return;
         }
 
         self.inlines.push(inline);
@@ -644,9 +679,10 @@ impl ParagraphBuilder {
             }
             last_text.push_str(fragment.trim_end_matches('\n'));
         } else {
-            self.inlines.push(Inline::Text(fragment.trim_end_matches('\n').to_string()));
+            self.inlines
+                .push(Inline::Text(fragment.trim_end_matches('\n').to_string()));
         }
-        
+
         self.consecutive_newlines = 0;
         self.has_content = true;
     }
@@ -710,7 +746,7 @@ impl ParagraphBuilder {
 
         let content = std::mem::take(&mut self.inlines);
         self.clear();
-        
+
         Some(Block::Paragraph {
             content,
             position: None,
@@ -765,7 +801,7 @@ mod tests {
         let doc = parser.parse().expect("should parse multiple headings");
 
         assert_eq!(doc.blocks.len(), 3);
-        
+
         for (i, expected_level) in [1u8, 2u8, 3u8].iter().enumerate() {
             match &doc.blocks[i] {
                 Block::Heading { level, .. } => assert_eq!(*level, *expected_level),
@@ -782,7 +818,12 @@ mod tests {
 
         assert_eq!(doc.blocks.len(), 1);
         match &doc.blocks[0] {
-            Block::CodeBlock { info, content, language, .. } => {
+            Block::CodeBlock {
+                info,
+                content,
+                language,
+                ..
+            } => {
                 assert_eq!(info.as_deref(), Some("rust"));
                 assert_eq!(language.as_deref(), Some("rust"));
                 assert!(content.contains("fn main()"));
@@ -844,11 +885,16 @@ mod tests {
         let parser = NomParser::with_defaults(input);
         let doc = parser.parse().expect("should parse thematic breaks");
 
-        let thematic_break_count = doc.blocks.iter()
+        let thematic_break_count = doc
+            .blocks
+            .iter()
             .filter(|block| matches!(block, Block::ThematicBreak { .. }))
             .count();
-        
-        assert!(thematic_break_count >= 1, "should parse at least one thematic break");
+
+        assert!(
+            thematic_break_count >= 1,
+            "should parse at least one thematic break"
+        );
     }
 
     #[test]
@@ -858,12 +904,21 @@ mod tests {
         let doc = parser.parse().expect("should parse mixed content");
 
         assert!(doc.blocks.len() >= 4);
-        
+
         // Check that we have different block types
-        let has_heading = doc.blocks.iter().any(|b| matches!(b, Block::Heading { .. }));
-        let has_paragraph = doc.blocks.iter().any(|b| matches!(b, Block::Paragraph { .. }));
+        let has_heading = doc
+            .blocks
+            .iter()
+            .any(|b| matches!(b, Block::Heading { .. }));
+        let has_paragraph = doc
+            .blocks
+            .iter()
+            .any(|b| matches!(b, Block::Paragraph { .. }));
         let has_list = doc.blocks.iter().any(|b| matches!(b, Block::List { .. }));
-        let has_code = doc.blocks.iter().any(|b| matches!(b, Block::CodeBlock { .. }));
+        let has_code = doc
+            .blocks
+            .iter()
+            .any(|b| matches!(b, Block::CodeBlock { .. }));
 
         assert!(has_heading, "should have heading");
         assert!(has_paragraph, "should have paragraph");
@@ -896,7 +951,7 @@ mod tests {
         match &doc.blocks[0] {
             Block::Paragraph { content, .. } => {
                 assert!(!content.is_empty());
-                
+
                 // Check for different inline types
                 let has_text = content.iter().any(|i| matches!(i, Inline::Text(_)));
                 let _has_emphasis = content.iter().any(|i| matches!(i, Inline::Emphasis { .. }));
@@ -918,10 +973,12 @@ mod tests {
         let doc = parser.parse().expect("should parse nested blockquotes");
 
         // Should create at least one blockquote
-        let blockquote_count = doc.blocks.iter()
+        let blockquote_count = doc
+            .blocks
+            .iter()
             .filter(|block| matches!(block, Block::BlockQuote { .. }))
             .count();
-        
+
         assert!(blockquote_count >= 1, "should have at least one blockquote");
     }
 
@@ -937,7 +994,7 @@ mod tests {
         for input in test_cases {
             let parser = NomParser::with_defaults(input);
             let result = parser.parse();
-            
+
             // Should not panic and should produce some result
             assert!(result.is_ok(), "should handle malformed input: {}", input);
         }
@@ -952,13 +1009,13 @@ mod tests {
         // Check that blocks have position information when available
         for block in &doc.blocks {
             match block {
-                Block::Heading { position, .. } |
-                Block::Paragraph { position, .. } |
-                Block::CodeBlock { position, .. } |
-                Block::BlockQuote { position, .. } |
-                Block::List { position, .. } |
-                Block::ThematicBreak { position, .. } |
-                Block::HtmlBlock { position, .. } => {
+                Block::Heading { position, .. }
+                | Block::Paragraph { position, .. }
+                | Block::CodeBlock { position, .. }
+                | Block::BlockQuote { position, .. }
+                | Block::List { position, .. }
+                | Block::ThematicBreak { position, .. }
+                | Block::HtmlBlock { position, .. } => {
                     // Position should be Some for blocks parsed by nom parser
                     assert!(position.is_some(), "block should have position information");
                 }
@@ -969,7 +1026,7 @@ mod tests {
     #[test]
     fn test_parser_configuration() {
         let input = "# Test";
-        
+
         // Test with strict mode
         let strict_config = ParserConfig {
             strict_commonmark: true,
@@ -995,10 +1052,10 @@ mod tests {
             max_errors: Some(10),
             ..ParserConfig::default()
         };
-        
+
         let parser = NomParser::new(input, config);
         let result = parser.parse();
-        
+
         // Should succeed even with potential errors due to non-strict mode
         assert!(result.is_ok());
     }
@@ -1010,7 +1067,7 @@ mod tests {
         let doc = parser.parse().expect("should handle Unicode");
 
         assert_eq!(doc.blocks.len(), 2);
-        
+
         // Check that Unicode content is preserved
         match &doc.blocks[0] {
             Block::Heading { content, .. } => {
@@ -1062,8 +1119,10 @@ End of document.
         assert!(doc.blocks.len() >= 5);
 
         // Check for variety of block types
-        let block_types: Vec<_> = doc.blocks.iter().map(|block| {
-            match block {
+        let block_types: Vec<_> = doc
+            .blocks
+            .iter()
+            .map(|block| match block {
                 Block::Heading { .. } => "heading",
                 Block::Paragraph { .. } => "paragraph",
                 Block::CodeBlock { .. } => "code",
@@ -1071,8 +1130,8 @@ End of document.
                 Block::List { .. } => "list",
                 Block::ThematicBreak { .. } => "thematic_break",
                 Block::HtmlBlock { .. } => "html",
-            }
-        }).collect();
+            })
+            .collect();
 
         assert!(block_types.contains(&"heading"));
         assert!(block_types.contains(&"paragraph"));
@@ -1081,14 +1140,14 @@ End of document.
     #[test]
     fn test_paragraph_builder() {
         let mut builder = ParagraphBuilder::new();
-        
+
         // Test basic text accumulation
         builder.push_text("Hello");
         builder.push_text("world");
-        
+
         let mut blocks = Vec::new();
         builder.flush_into(&mut blocks);
-        
+
         assert_eq!(blocks.len(), 1);
         match &blocks[0] {
             Block::Paragraph { content, .. } => {
@@ -1105,18 +1164,18 @@ End of document.
     #[test]
     fn test_inline_element_parsing() {
         let mut builder = ParagraphBuilder::new();
-        
+
         // Test inline element accumulation
         builder.push_inline(Inline::Text("Start ".to_string()));
-        builder.push_inline(Inline::Emphasis { 
-            strong: false, 
-            content: vec![Inline::Text("emphasized".to_string())] 
+        builder.push_inline(Inline::Emphasis {
+            strong: false,
+            content: vec![Inline::Text("emphasized".to_string())],
         });
         builder.push_inline(Inline::Text(" end".to_string()));
-        
+
         let mut blocks = Vec::new();
         builder.flush_into(&mut blocks);
-        
+
         assert_eq!(blocks.len(), 1);
         match &blocks[0] {
             Block::Paragraph { content, .. } => {
