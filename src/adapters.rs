@@ -409,10 +409,19 @@ mod tests {
     #[test]
     fn test_lexer_adapter() {
         let input = "# Heading";
-        let mut adapter = LexerAdapter::new(input).unwrap();
+        let adapter = LexerAdapter::new(input).unwrap();
 
-        let token = adapter.next_token().unwrap();
-        assert!(!matches!(token, Token::Eof));
+        // The adapter should have read the first token during initialization
+        let current = adapter.current_token();
+        assert!(current.is_some(), "Current token should not be None");
+
+        // Verify it's the heading token
+        if let Some(Token::AtxHeading { level, content }) = current {
+            assert_eq!(*level, 1);
+            assert_eq!(*content, "Heading");
+        } else {
+            panic!("Expected AtxHeading token, got {:?}", current);
+        }
     }
 
     #[test]
