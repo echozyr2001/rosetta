@@ -1,4 +1,5 @@
 // Core modules
+pub mod adapters;
 pub mod ast;
 pub mod codegen;
 pub mod dom;
@@ -6,6 +7,7 @@ pub mod error;
 pub mod lexer;
 pub mod parser;
 pub mod performance;
+pub mod traits;
 
 // Re-export key types for public API
 pub use ast::{Block, Document, Inline, Node, Visitable, Visitor};

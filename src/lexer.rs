@@ -7,6 +7,7 @@ use unicode_segmentation::{GraphemeIndices, UnicodeSegmentation};
 
 // Flattened CommonMark token definitions with rich metadata live here.
 mod token;
+mod token_impl;
 
 // Nom-based lexer implementation lives at the end of this file.
 // We expose it here so callers can begin experimenting while we
