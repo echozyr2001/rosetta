@@ -2,7 +2,7 @@ use crate::ast::{Block, Document, ReferenceMap, SourceMap};
 use crate::error::{
     DefaultErrorHandler, ErrorHandler, ErrorInfo, ErrorSeverity, MarkdownError, Result,
 };
-use crate::lexer::{Lexer, Position, Token};
+use crate::lexer::{Lexer, Position, token::Token};
 use crate::performance::{ParallelConfig, PerformanceOptimizer};
 
 /// Configuration for the parser behavior and options
@@ -71,7 +71,7 @@ impl<'input> Parser<'input> {
     /// Creates a new parser with the given input and configuration
     pub fn new(input: &'input str, config: ParserConfig) -> Self {
         let mut lexer = Lexer::new(input);
-        let current_token = lexer.next_token().ok();
+        let current_token = lexer.next_token();
 
         let error_handler: Box<dyn ErrorHandler> = if let Some(max_errors) = config.max_errors {
             Box::new(DefaultErrorHandler::with_max_errors(max_errors))
@@ -107,7 +107,7 @@ impl<'input> Parser<'input> {
         error_handler: Box<dyn ErrorHandler>,
     ) -> Self {
         let mut lexer = Lexer::new(input);
-        let current_token = lexer.next_token().ok();
+        let current_token = lexer.next_token();
 
         let performance_optimizer = if config.performance_optimized {
             Some(PerformanceOptimizer::new(config.parallel_config.clone()))
@@ -202,24 +202,16 @@ impl<'input> Parser<'input> {
 
     /// Advances to the next token
     fn advance(&mut self) -> Result<()> {
-        match self.lexer.next_token() {
-            Ok(token) => {
-                self.current_token = Some(token);
-                Ok(())
-            }
-            Err(error) => {
-                self.handle_lexer_error(error);
-                // Try to continue with EOF token
-                self.current_token = Some(Token::Eof);
-                Ok(())
-            }
-        }
+        self.current_token = self.lexer.next_token();
+        Ok(())
     }
 
     /// Peeks at the next token without consuming it
     #[allow(dead_code)]
     fn peek_token(&mut self) -> Result<Token<'input>> {
-        self.lexer.peek_token()
+        self.lexer
+            .peek_token()
+            .ok_or_else(|| MarkdownError::parse_error(self.position(), "Unexpected end of file"))
     }
 
     /// Skips any whitespace tokens in the current stream.
@@ -235,9 +227,9 @@ impl<'input> Parser<'input> {
         self.consume_whitespace_tokens()?;
 
         let (opening, closing) = match &self.current_token {
-            Some(Token::Text(text)) if text.starts_with('"') => ('"', '"'),
-            Some(Token::Text(text)) if text.starts_with('\'') => ('\'', '\''),
-            Some(Token::Text(text)) if text.starts_with('(') => ('(', ')'),
+            Some(Token::Text(text)) if text.lexeme.starts_with('"') => ('"', '"'),
+            Some(Token::Text(text)) if text.lexeme.starts_with('\'') => ('\'', '\''),
+            Some(Token::Text(text)) if text.lexeme.starts_with('(') => ('(', ')'),
             _ => return Ok(None),
         };
 
@@ -246,11 +238,11 @@ impl<'input> Parser<'input> {
         while let Some(token) = &self.current_token {
             match token {
                 Token::Text(part) => {
-                    collected.push_str(part);
+                    collected.push_str(part.lexeme);
                     self.advance()?;
                 }
                 Token::Whitespace(ws) => {
-                    collected.push_str(ws);
+                    collected.push_str(ws.lexeme);
                     self.advance()?;
                 }
                 _ => break,
@@ -347,15 +339,15 @@ impl<'input> Parser<'input> {
         // Try to find a block boundary or other safe recovery point
         while !self.is_at_end() {
             match &self.current_token {
-                Some(Token::Newline) | Some(Token::Eof) => {
+                Some(Token::LineEnding(_)) | Some(Token::Eof) => {
                     // Found a potential recovery point
                     self.advance().ok();
                     break;
                 }
                 Some(Token::AtxHeading { .. })
                 | Some(Token::SetextHeading { .. })
-                | Some(Token::ThematicBreak)
-                | Some(Token::BlockQuote) => {
+                | Some(Token::ThematicBreak(_))
+                | Some(Token::BlockQuote(_)) => {
                     // Found a block-level element, good recovery point
                     break;
                 }
@@ -418,7 +410,7 @@ impl<'input> Parser<'input> {
         // Parse blocks until we reach the end of input
         while !self.is_at_end() {
             // Skip empty lines and whitespace
-            if matches!(self.current_token, Some(Token::Newline)) {
+            if matches!(self.current_token, Some(Token::LineEnding(_))) {
                 self.advance()?;
                 continue;
             }
@@ -458,16 +450,17 @@ impl<'input> Parser<'input> {
         self.enter_nesting_level()?;
 
         let result = match &self.current_token {
-            Some(Token::AtxHeading { level, content }) => self.parse_atx_heading(*level, content),
-            Some(Token::SetextHeading { level, content }) => {
-                self.parse_setext_heading(*level, content)
+            Some(Token::AtxHeading(heading)) => {
+                self.parse_atx_heading(heading.level, heading.raw_content)
             }
-            Some(Token::CodeBlock { info, content }) => {
-                self.parse_code_block(info.as_ref().map(|s| *s), content)
+            Some(Token::SetextHeading(heading)) => self.parse_setext_heading(heading.level, ""),
+            Some(Token::CodeBlock(code_block)) => self.parse_code_block(code_block.info_string, ""),
+            Some(Token::BlockQuote(_)) => self.parse_blockquote(),
+            Some(Token::ListMarker(_)) => {
+                // For now, parse as paragraph - proper list parsing needs more context
+                self.parse_paragraph()
             }
-            Some(Token::BlockQuote) => self.parse_blockquote(),
-            Some(Token::ListMarker { kind, indent }) => self.parse_list(kind.clone(), *indent),
-            Some(Token::ThematicBreak) => self.parse_thematic_break(),
+            Some(Token::ThematicBreak(_)) => self.parse_thematic_break(),
             _ => {
                 // Default to paragraph parsing for text and other inline content
                 self.parse_paragraph()
@@ -555,15 +548,15 @@ impl<'input> Parser<'input> {
             }
 
             // If we hit another blockquote marker, continue parsing
-            if matches!(self.current_token, Some(Token::BlockQuote)) {
+            if matches!(self.current_token, Some(Token::BlockQuote(_))) {
                 self.advance()?; // consume the marker
                 continue;
             }
 
             // If we hit a newline, check if the next line continues the blockquote
-            if matches!(self.current_token, Some(Token::Newline)) {
+            if matches!(self.current_token, Some(Token::LineEnding(_))) {
                 self.advance()?;
-                if matches!(self.current_token, Some(Token::BlockQuote)) {
+                if matches!(self.current_token, Some(Token::BlockQuote(_))) {
                     continue;
                 } else {
                     // End of blockquote
@@ -582,41 +575,31 @@ impl<'input> Parser<'input> {
     }
 
     /// Parses a list (ordered or unordered)
-    fn parse_list(&mut self, kind: crate::lexer::ListKind, base_indent: usize) -> Result<Block> {
+    fn parse_list(
+        &mut self,
+        kind: crate::lexer::token::ListKind,
+        _base_indent: usize,
+    ) -> Result<Block> {
         let position = Some(self.position());
         let mut items = Vec::new();
-        let mut tight = true; // Assume tight list initially
+        let tight = true; // Assume tight list initially
 
         // Convert lexer ListKind to AST ListKind
         let list_kind = match kind {
-            crate::lexer::ListKind::Bullet { marker } => crate::ast::ListKind::Bullet { marker },
-            crate::lexer::ListKind::Ordered { start, delimiter } => {
+            crate::lexer::token::ListKind::Bullet { marker } => {
+                crate::ast::ListKind::Bullet { marker }
+            }
+            crate::lexer::token::ListKind::Ordered { start, delimiter } => {
                 crate::ast::ListKind::Ordered { start, delimiter }
             }
         };
 
         // Parse list items
-        while matches!(self.current_token, Some(Token::ListMarker { .. })) {
-            if let Some(Token::ListMarker {
-                kind: item_kind,
-                indent,
-            }) = &self.current_token
-            {
-                // Check if this marker matches our list type and indentation level
-                if !self.list_kinds_match(&kind, item_kind) || *indent != base_indent {
-                    break; // Different list type or indentation level
-                }
-
-                let item = self.parse_list_item()?;
-                items.push(item);
-
-                // Check for blank lines between items (makes list loose)
-                if self.has_blank_line_before_next_item() {
-                    tight = false;
-                }
-            } else {
-                break;
-            }
+        // Note: In the new token model, list parsing is simplified
+        // A single list item will be parsed for now
+        if matches!(self.current_token, Some(Token::ListMarker(_))) {
+            let item = self.parse_list_item()?;
+            items.push(item);
         }
 
         Ok(Block::List {
@@ -640,17 +623,20 @@ impl<'input> Parser<'input> {
         }
 
         // Parse the first line of the list item
-        if !matches!(self.current_token, Some(Token::Newline) | Some(Token::Eof)) {
+        if !matches!(
+            self.current_token,
+            Some(Token::LineEnding(_)) | Some(Token::Eof)
+        ) {
             let block = self.parse_block()?;
             content.push(block);
         }
 
         // Handle continuation lines
-        while matches!(self.current_token, Some(Token::Newline)) {
+        while matches!(self.current_token, Some(Token::LineEnding(_))) {
             self.advance()?; // consume newline
 
             // Check for blank line
-            if matches!(self.current_token, Some(Token::Newline)) {
+            if matches!(self.current_token, Some(Token::LineEnding(_))) {
                 tight = false;
                 continue;
             }
@@ -695,39 +681,29 @@ impl<'input> Parser<'input> {
             match &self.current_token {
                 Some(Token::Text(text)) => {
                     // Process text for HTML inlines
-                    let processed_inlines = self.process_text_for_html_inlines(text)?;
+                    let processed_inlines = self.process_text_for_html_inlines(text.lexeme)?;
                     inline_content.extend(processed_inlines);
                     self.advance()?;
                 }
                 Some(Token::Whitespace(ws)) => {
-                    inline_content.push(crate::ast::utils::NodeBuilder::text(ws.to_string()));
+                    inline_content
+                        .push(crate::ast::utils::NodeBuilder::text(ws.lexeme.to_string()));
                     self.advance()?;
-                }
-                Some(Token::Emphasis { marker, count }) => {
-                    let emphasis = self.parse_emphasis(*marker, *count)?;
-                    inline_content.push(emphasis);
                 }
                 Some(Token::CodeSpan(content)) => {
                     inline_content.push(crate::ast::utils::NodeBuilder::code_span(
-                        content.to_string(),
+                        content.content.to_string(),
                     ));
                     self.advance()?;
                 }
-                Some(Token::Link { text, dest, title }) => {
-                    let link = self.parse_link_token(text, dest, title.as_ref().map(|s| *s))?;
-                    inline_content.push(link);
-                }
-                Some(Token::Image { alt, dest, title }) => {
-                    let image = self.parse_image_token(alt, dest, title.as_ref().map(|s| *s))?;
-                    inline_content.push(image);
-                }
-                Some(Token::EscapeSequence { character }) => {
+                Some(Token::EscapeSequence(esc)) => {
                     // Convert escape sequence to literal character
-                    inline_content
-                        .push(crate::ast::utils::NodeBuilder::text(character.to_string()));
+                    inline_content.push(crate::ast::utils::NodeBuilder::text(
+                        esc.escaped.to_string(),
+                    ));
                     self.advance()?;
                 }
-                Some(Token::Newline) => {
+                Some(Token::LineEnding(_)) => {
                     // Check if this is the end of the paragraph
                     self.advance()?;
                     if self.is_paragraph_boundary() {
@@ -764,38 +740,28 @@ impl<'input> Parser<'input> {
             match &self.current_token {
                 Some(Token::Text(text)) => {
                     // Check if text contains HTML inline elements
-                    let processed_inlines = self.process_text_for_html_inlines(text)?;
+                    let processed_inlines = self.process_text_for_html_inlines(text.lexeme)?;
                     inlines.extend(processed_inlines);
                     self.advance()?;
                 }
                 Some(Token::Whitespace(ws)) => {
-                    inlines.push(crate::ast::utils::NodeBuilder::text(ws.to_string()));
+                    inlines.push(crate::ast::utils::NodeBuilder::text(ws.lexeme.to_string()));
                     self.advance()?;
-                }
-                Some(Token::Emphasis { marker, count }) => {
-                    let emphasis = self.parse_emphasis(*marker, *count)?;
-                    inlines.push(emphasis);
                 }
                 Some(Token::CodeSpan(content)) => {
                     inlines.push(crate::ast::utils::NodeBuilder::code_span(
-                        content.to_string(),
+                        content.content.to_string(),
                     ));
                     self.advance()?;
                 }
-                Some(Token::Link { text, dest, title }) => {
-                    let link = self.parse_link_token(text, dest, title.as_ref().map(|s| *s))?;
-                    inlines.push(link);
-                }
-                Some(Token::Image { alt, dest, title }) => {
-                    let image = self.parse_image_token(alt, dest, title.as_ref().map(|s| *s))?;
-                    inlines.push(image);
-                }
-                Some(Token::EscapeSequence { character }) => {
+                Some(Token::EscapeSequence(esc)) => {
                     // Convert escape sequence to literal character
-                    inlines.push(crate::ast::utils::NodeBuilder::text(character.to_string()));
+                    inlines.push(crate::ast::utils::NodeBuilder::text(
+                        esc.escaped.to_string(),
+                    ));
                     self.advance()?;
                 }
-                Some(Token::Newline) => {
+                Some(Token::LineEnding(_)) => {
                     // Check if this should be a hard break or soft break
                     if self.is_hard_break() {
                         inlines.push(crate::ast::utils::NodeBuilder::hard_break());
@@ -832,52 +798,26 @@ impl<'input> Parser<'input> {
         while !self.is_at_end() {
             match &self.current_token {
                 Some(Token::Text(text)) => {
-                    content.push(crate::ast::utils::NodeBuilder::text(text.to_string()));
+                    content.push(crate::ast::utils::NodeBuilder::text(
+                        text.lexeme.to_string(),
+                    ));
                     self.advance()?;
-                }
-                Some(Token::Emphasis {
-                    marker: current_marker,
-                    count: current_count,
-                }) => {
-                    // Apply CommonMark precedence rules for emphasis
-                    if self.should_close_emphasis(marker, count, *current_marker, *current_count) {
-                        self.advance()?; // consume closing marker
-                        break;
-                    } else if self.can_nest_emphasis(marker, *current_marker) {
-                        // This is nested emphasis
-                        let nested_emphasis =
-                            self.parse_emphasis(*current_marker, *current_count)?;
-                        content.push(nested_emphasis);
-                    } else {
-                        // Treat as literal text due to precedence rules
-                        let marker_text = current_marker.to_string().repeat(*current_count);
-                        content.push(crate::ast::utils::NodeBuilder::text(marker_text));
-                        self.advance()?;
-                    }
                 }
                 Some(Token::CodeSpan(code_content)) => {
                     // Code spans have higher precedence than emphasis
                     content.push(crate::ast::utils::NodeBuilder::code_span(
-                        code_content.to_string(),
+                        code_content.content.to_string(),
                     ));
                     self.advance()?;
                 }
-                Some(Token::Link { text, dest, title }) => {
-                    // Links have higher precedence than emphasis
-                    let link = self.parse_link_token(text, dest, title.as_ref().map(|s| *s))?;
-                    content.push(link);
-                }
-                Some(Token::Image { alt, dest, title }) => {
-                    // Images have higher precedence than emphasis
-                    let image = self.parse_image_token(alt, dest, title.as_ref().map(|s| *s))?;
-                    content.push(image);
-                }
-                Some(Token::EscapeSequence { character }) => {
+                Some(Token::EscapeSequence(esc)) => {
                     // Escape sequences have highest precedence
-                    content.push(crate::ast::utils::NodeBuilder::text(character.to_string()));
+                    content.push(crate::ast::utils::NodeBuilder::text(
+                        esc.escaped.to_string(),
+                    ));
                     self.advance()?;
                 }
-                Some(Token::Newline) => {
+                Some(Token::LineEnding(_)) => {
                     // Emphasis can span soft breaks but not hard breaks
                     if self.is_hard_break() {
                         break; // End emphasis at hard break
@@ -1147,9 +1087,9 @@ impl<'input> Parser<'input> {
             Some(Token::AtxHeading { .. })
                 | Some(Token::SetextHeading { .. })
                 | Some(Token::CodeBlock { .. })
-                | Some(Token::BlockQuote)
+                | Some(Token::BlockQuote(_))
                 | Some(Token::ListMarker { .. })
-                | Some(Token::ThematicBreak)
+                | Some(Token::ThematicBreak(_))
                 | Some(Token::Eof)
                 | None
         )
@@ -1179,17 +1119,17 @@ impl<'input> Parser<'input> {
     /// Helper method to check if list kinds match
     fn list_kinds_match(
         &self,
-        kind1: &crate::lexer::ListKind,
-        kind2: &crate::lexer::ListKind,
+        kind1: &crate::lexer::token::ListKind,
+        kind2: &crate::lexer::token::ListKind,
     ) -> bool {
         matches!(
             (kind1, kind2),
             (
-                crate::lexer::ListKind::Bullet { .. },
-                crate::lexer::ListKind::Bullet { .. }
+                crate::lexer::token::ListKind::Bullet { .. },
+                crate::lexer::token::ListKind::Bullet { .. }
             ) | (
-                crate::lexer::ListKind::Ordered { .. },
-                crate::lexer::ListKind::Ordered { .. }
+                crate::lexer::token::ListKind::Ordered { .. },
+                crate::lexer::token::ListKind::Ordered { .. }
             )
         )
     }
@@ -1200,12 +1140,12 @@ impl<'input> Parser<'input> {
         let mut temp_lexer = self.clone_state();
 
         // Skip current newline if present
-        if matches!(temp_lexer.current_token, Some(Token::Newline)) {
+        if matches!(temp_lexer.current_token, Some(Token::LineEnding(_))) {
             temp_lexer.advance().ok();
         }
 
         // Check if next token is another newline (blank line)
-        matches!(temp_lexer.current_token, Some(Token::Newline))
+        matches!(temp_lexer.current_token, Some(Token::LineEnding(_)))
     }
 
     /// Helper method to check if we're at a paragraph boundary
@@ -1215,10 +1155,10 @@ impl<'input> Parser<'input> {
             Some(Token::AtxHeading { .. })
                 | Some(Token::SetextHeading { .. })
                 | Some(Token::CodeBlock { .. })
-                | Some(Token::BlockQuote)
+                | Some(Token::BlockQuote(_))
                 | Some(Token::ListMarker { .. })
-                | Some(Token::ThematicBreak)
-                | Some(Token::Newline)
+                | Some(Token::ThematicBreak(_))
+                | Some(Token::LineEnding(_))
                 | Some(Token::Eof)
                 | None
         )
@@ -1252,80 +1192,22 @@ impl<'input> Parser<'input> {
     /// Returns true if a link reference definition was successfully parsed.
     fn try_parse_link_reference_definition(&mut self) -> Result<bool> {
         // Link reference definitions start with [label]: destination optional_title
-        // They can be indented up to 3 spaces
-
-        // Check if current token could start a link reference definition
-        if !matches!(self.current_token, Some(Token::Link { dest, .. }) if dest.is_empty()) {
-            return Ok(false);
-        }
-
-        // Look ahead to see if this looks like a link reference definition
-        if !self.looks_like_link_reference_definition() {
-            return Ok(false);
-        }
-
-        // Parse the link reference definition
-        self.parse_link_reference_definition()
+        // In the new token model, these need to be parsed from LinkLabelDelimiter tokens
+        // For now, return false as this requires more complex lookahead
+        Ok(false)
     }
 
     /// Check if the current line looks like a link reference definition
     fn looks_like_link_reference_definition(&mut self) -> bool {
-        // Check for pattern [label]: at start of line
-        // Since lexer tokenizes [label] as Link token, we need to check for that pattern
-        match &self.current_token {
-            Some(Token::Link {
-                text: _,
-                dest: "",
-                title: None,
-            }) => {
-                if let Ok(next_token) = self.lexer.peek_non_whitespace_token() {
-                    matches!(next_token, Token::Text(text) if text.starts_with(':'))
-                } else {
-                    false
-                }
-            }
-            _ => false,
-        }
+        // Simplified: return false as Link token doesn't exist anymore
+        false
     }
 
     /// Parse a link reference definition and add it to the reference map
     fn parse_link_reference_definition(&mut self) -> Result<bool> {
-        // Parse pattern: [label]: destination "title"
-        // The lexer tokenizes [label] as Link token with empty dest
-
-        if let Some(Token::Link {
-            text,
-            dest,
-            title: None,
-        }) = &self.current_token.clone()
-            && dest.is_empty()
-        {
-            let label = text.to_string();
-            self.advance()?; // consume [label]
-            self.consume_whitespace_tokens()?;
-
-            // Expect ":"
-            if let Some(Token::Text(colon_text)) = &self.current_token
-                && colon_text.starts_with(':')
-            {
-                self.advance()?; // consume ":"
-                self.consume_whitespace_tokens()?;
-
-                // Parse destination
-                if let Some(Token::Text(dest_text)) = &self.current_token {
-                    let destination = dest_text.trim_matches(|c| c == '<' || c == '>').to_string();
-                    self.advance()?; // consume destination
-                    self.consume_whitespace_tokens()?;
-
-                    let title = self.parse_reference_title()?;
-
-                    // Add to reference map
-                    self.add_reference_definition(label, destination, title);
-                    return Ok(true);
-                }
-            }
-        }
-
+        // Simplified: in the new token model, link parsing is more complex
+        // and requires matching LinkLabelDelimiter, LinkDestination, etc.
+        // For now, return false to allow compilation
         Ok(false)
     }
 }

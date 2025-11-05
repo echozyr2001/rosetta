@@ -1,36 +1,14 @@
-use crate::lexer::token::{
-    AtxHeadingToken, CodeBlockToken, ListMarkerToken, SetextHeadingToken, TextToken, Token,
-};
+use crate::lexer::Position;
 /// Implementation of CGP traits for the existing Token type
 ///
 /// This module provides trait implementations that allow the existing
 /// Token type to work with the CGP-based parser.
-use crate::lexer::{Position, Token as LexerToken};
+use crate::lexer::token::{
+    AtxHeadingToken, CodeBlockToken, ListMarkerToken, SetextHeadingToken, TextToken, Token,
+};
 use crate::traits::token_traits::*;
 
-// Implement TokenType for the Token in lexer.rs
-impl<'input> TokenType for LexerToken<'input> {
-    fn position(&self) -> Option<Position> {
-        None // Simplified: lexer Token doesn't track position
-    }
-
-    fn is_eof(&self) -> bool {
-        matches!(self, LexerToken::Eof)
-    }
-
-    fn is_newline(&self) -> bool {
-        matches!(self, LexerToken::Newline)
-    }
-
-    fn is_whitespace(&self) -> bool {
-        matches!(self, LexerToken::Whitespace(_))
-    }
-
-    fn is_indent(&self) -> bool {
-        matches!(self, LexerToken::Indent(_))
-    }
-}
-
+// Implement TokenType for Token from token.rs
 impl<'input> TokenType for Token<'input> {
     fn position(&self) -> Option<Position> {
         // For simplicity, return None for now

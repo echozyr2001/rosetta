@@ -4,7 +4,7 @@
 /// to make them compatible with the CGP trait system.
 use crate::ast::{Block, Document, Inline};
 use crate::error::{ErrorHandler, Result};
-use crate::lexer::{Lexer, Position, Token};
+use crate::lexer::{Lexer, Position, token::Token};
 use crate::parser::ParserConfig;
 use crate::traits::*;
 use std::marker::PhantomData;
@@ -18,7 +18,7 @@ pub struct LexerAdapter<'input> {
 impl<'input> LexerAdapter<'input> {
     pub fn new(input: &'input str) -> Result<Self> {
         let mut lexer = Lexer::new(input);
-        let current_token = lexer.next_token().ok();
+        let current_token = lexer.next_token();
         Ok(Self {
             lexer,
             current_token,
@@ -34,13 +34,23 @@ impl<'input> HasTokenProvider for LexerAdapter<'input> {
     }
 
     fn next_token(&mut self) -> Result<Self::Token> {
-        let token = self.lexer.next_token()?;
+        let token = self.lexer.next_token().ok_or_else(|| {
+            crate::error::MarkdownError::parse_error(
+                self.lexer.position(),
+                "Unexpected end of file",
+            )
+        })?;
         self.current_token = Some(token.clone());
         Ok(token)
     }
 
     fn peek_token(&mut self) -> Result<Self::Token> {
-        self.lexer.peek_token()
+        self.lexer.peek_token().ok_or_else(|| {
+            crate::error::MarkdownError::parse_error(
+                self.lexer.position(),
+                "Unexpected end of file",
+            )
+        })
     }
 
     fn current_position(&self) -> Position {
@@ -313,7 +323,7 @@ impl<'input> ParsingContext for DefaultParsingContext<'input> {
         // Implementation would attempt to recover from parse errors
         while !self.is_at_end() {
             if let Some(token) = self.current_token()
-                && matches!(token, Token::Newline | Token::Eof)
+                && matches!(token, Token::LineEnding(_) | Token::Eof)
             {
                 let _ = self.advance();
                 break;
@@ -416,9 +426,9 @@ mod tests {
         assert!(current.is_some(), "Current token should not be None");
 
         // Verify it's the heading token
-        if let Some(Token::AtxHeading { level, content }) = current {
-            assert_eq!(*level, 1);
-            assert_eq!(*content, "Heading");
+        if let Some(Token::AtxHeading(heading)) = current {
+            assert_eq!(heading.level, 1);
+            assert!(heading.raw_content.contains("Heading"));
         } else {
             panic!("Expected AtxHeading token, got {:?}", current);
         }
