@@ -1,7 +1,5 @@
 use crate::ast::{Block, Document, Inline, ListItem, ListKind, ReferenceMap, SourceMap};
-use crate::error::{
-    ErrorHandler, ErrorInfo, ErrorSeverity, MarkdownError, Result,
-};
+use crate::error::{ErrorHandler, ErrorInfo, ErrorSeverity, MarkdownError, Result};
 use crate::lexer::{Lexer, Position, token as nom_token};
 // use crate::lexer::{Lexer, Position, token::Token};
 use crate::performance::ParallelConfig;
