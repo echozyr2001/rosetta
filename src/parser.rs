@@ -1,4 +1,4 @@
-use crate::ast::{Block, Document, Inline, ListItem, ListKind, ReferenceMap, SourceMap};
+use crate::ast::{Block, Document, Inline, ListItem, ListKind, SourceMap};
 use crate::error::{ErrorHandler, ErrorInfo, ErrorSeverity, MarkdownError, Result};
 use crate::lexer::{Lexer, Position, token as nom_token};
 // use crate::lexer::{Lexer, Position, token::Token};
@@ -522,7 +522,11 @@ impl<'input> Parser<'input> {
                     inline_content.push(Inline::SoftBreak);
                 }
                 _ => {
-                    // Hit a block-level token, end the paragraph
+                    // Hit a block-level token; ensure we always make progress.
+                    if inline_content.is_empty() {
+                        // Advance once to avoid getting stuck on the same token.
+                        self.advance()?;
+                    }
                     break;
                 }
             }
@@ -672,12 +676,14 @@ impl<'input> Parser<'input> {
 }
 
 /// Enhanced paragraph builder that handles complex inline content.
+#[cfg(test)]
 struct ParagraphBuilder {
     inlines: Vec<Inline>,
     consecutive_newlines: usize,
     has_content: bool,
 }
 
+#[cfg(test)]
 impl ParagraphBuilder {
     fn new() -> Self {
         Self {
@@ -721,41 +727,6 @@ impl ParagraphBuilder {
         self.has_content = true;
     }
 
-    fn push_whitespace_into(&mut self, whitespace: &str, output: &mut Vec<Block>) {
-        if whitespace.contains('\n') {
-            for ch in whitespace.chars() {
-                if ch == '\n' {
-                    self.push_newline_into(output);
-                } else if ch.is_whitespace() {
-                    self.ensure_space();
-                }
-            }
-        } else {
-            self.ensure_space();
-        }
-    }
-
-    fn push_newline(&mut self) {
-        self.ensure_space();
-        self.consecutive_newlines += 1;
-    }
-
-    fn push_newline_into(&mut self, output: &mut Vec<Block>) {
-        self.push_newline();
-        if self.consecutive_newlines >= 2 {
-            self.flush_into(output);
-            self.consecutive_newlines = 0;
-        } else if self.has_content {
-            // Add soft break for single newline within paragraph
-            self.inlines.push(Inline::SoftBreak);
-        }
-    }
-
-    fn mark_break_into(&mut self, output: &mut Vec<Block>) {
-        self.flush_into(output);
-        self.consecutive_newlines = 0;
-    }
-
     fn flush_into(&mut self, output: &mut Vec<Block>) {
         if let Some(block) = self.flush() {
             output.push(block);
@@ -792,35 +763,11 @@ impl ParagraphBuilder {
         self.consecutive_newlines = 0;
         self.has_content = false;
     }
-
-    fn ensure_space(&mut self) {
-        if let Some(Inline::Text(last_text)) = self.inlines.last_mut() {
-            if !last_text.ends_with(' ') {
-                last_text.push(' ');
-            }
-        } else if self.has_content {
-            self.inlines.push(Inline::Text(" ".to_string()));
-        }
-    }
 }
 
-/// Parser state for tracking parsing context and recovery
-#[derive(Debug, Clone, Default)]
-struct ParserState {
-    /// Current nesting depth
-    nesting_depth: usize,
-    /// Whether we're currently in a recovery mode
-    in_recovery: bool,
-    /// Last known good position for error recovery
-    last_good_position: Position,
-    /// Reference definitions collected during parsing
-    reference_map: ReferenceMap,
-}
-
-/// Simple parse function with default configuration for convenience.
+/// Parse Markdown using the default parser configuration.
 pub fn parse(markdown: &str) -> Result<Document> {
-    let parser = Parser::with_defaults(markdown);
-    parser.parse()
+    Parser::with_defaults(markdown).parse()
 }
 
 /// Parse function with custom configuration.

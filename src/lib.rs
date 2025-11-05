@@ -512,8 +512,8 @@ fn hello() {
         assert!(streaming_result.is_ok());
 
         // Test large document simulation
-        let large_section = "# Large Section\n\nContent ".repeat(100);
-        let large_doc = large_section.repeat(10); // Very large document
+        let large_section = "# Large Section\n\nContent block.\n\n";
+        let large_doc = large_section.repeat(150); // Very large document with many blocks
 
         let large_config = streaming::StreamingConfig {
             chunk_size: 4096, // 4KB chunks
@@ -527,7 +527,7 @@ fn hello() {
 
         let large_document = large_result.unwrap();
         assert!(large_document.blocks.len() > 100); // Should have many blocks
-        assert!(large_parser.bytes_processed() > 10000); // Should have processed significant data
+        assert_eq!(large_parser.bytes_processed(), large_doc.len());
 
         // Test position tracking in streaming
         let multiline_doc = "Line 1\nLine 2\nLine 3\n\n# Heading\n\nParagraph";
