@@ -1,6 +1,6 @@
 use rosetta::ast::{Block, Inline};
-use rosetta::nom_parser::{NomParser, parse, parse_with_config};
 use rosetta::parser::ParserConfig;
+use rosetta::parser::{Parser, parse, parse_with_config};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Enhanced NomParser Demo ===\n");
@@ -100,7 +100,7 @@ Final paragraph.
 
     // Example 4: Parser instance with position tracking
     println!("4. Position tracking:");
-    let parser = NomParser::with_defaults("# Positioned\n\nContent here.");
+    let parser = Parser::with_defaults("# Positioned\n\nContent here.");
     println!("Initial position: {:?}", parser.position());
 
     let positioned_doc = parser.parse()?;

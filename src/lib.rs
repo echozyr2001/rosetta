@@ -5,7 +5,6 @@ pub mod codegen;
 pub mod dom;
 pub mod error;
 pub mod lexer;
-pub mod nom_parser;
 pub mod parser;
 pub mod performance;
 pub mod traits;
@@ -18,7 +17,7 @@ pub use codegen::{
 pub use dom::DomNode;
 pub use error::{MarkdownError, Result};
 pub use lexer::{Lexer, Position, token::Token};
-pub use nom_parser::NomParser;
+pub use parser::Parser;
 pub use parser::ParserConfig;
 pub use performance::{ParallelConfig, PerformanceOptimizer, ZeroCopyStr};
 
