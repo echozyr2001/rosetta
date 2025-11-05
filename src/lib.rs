@@ -1,4 +1,5 @@
 // Core modules
+pub mod adapters;
 pub mod ast;
 pub mod codegen;
 pub mod dom;
@@ -7,6 +8,7 @@ pub mod lexer;
 pub mod nom_parser;
 pub mod parser;
 pub mod performance;
+pub mod traits;
 
 // Re-export key types for public API
 pub use ast::{Block, Document, Inline, Node, Visitable, Visitor};
@@ -17,6 +19,7 @@ pub use dom::DomNode;
 pub use error::{MarkdownError, Result};
 pub use lexer::{Lexer, Position, Token};
 pub use nom_parser::NomParser;
+pub use lexer::{Lexer, Position, token::Token};
 pub use parser::ParserConfig;
 pub use performance::{ParallelConfig, PerformanceOptimizer, ZeroCopyStr};
 
