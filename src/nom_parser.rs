@@ -1,6 +1,6 @@
 use crate::ast::{Block, Document, Inline, ListItem, ListKind, SourceMap};
 use crate::error::{ErrorHandler, ErrorInfo, ErrorSeverity, MarkdownError, Result};
-use crate::lexer::{NomLexer, Position, token as nom_token};
+use crate::lexer::{Lexer, Position, token as nom_token};
 use crate::parser::ParserConfig;
 
 /// Enhanced nom-based parser supporting comprehensive CommonMark constructs.
@@ -10,7 +10,7 @@ use crate::parser::ParserConfig;
 /// - Inline elements: text, emphasis, code spans, links, images, HTML inlines
 /// - Advanced features: error recovery, position tracking, reference definitions
 pub struct NomParser<'input> {
-    lexer: NomLexer<'input>,
+    lexer: Lexer<'input>,
     config: ParserConfig,
     current_token: Option<nom_token::Token<'input>>,
     peeked_token: Option<nom_token::Token<'input>>,
@@ -21,7 +21,7 @@ pub struct NomParser<'input> {
 impl<'input> NomParser<'input> {
     /// Creates a new parser instance with the given configuration.
     pub fn new(input: &'input str, config: ParserConfig) -> Self {
-        let mut lexer = NomLexer::new(input);
+        let mut lexer = Lexer::new(input);
         let current_token = lexer.next_token();
 
         let error_handler: Box<dyn ErrorHandler> = if let Some(max_errors) = config.max_errors {
@@ -53,7 +53,7 @@ impl<'input> NomParser<'input> {
         config: ParserConfig,
         error_handler: Box<dyn ErrorHandler>,
     ) -> Self {
-        let mut lexer = NomLexer::new(input);
+        let mut lexer = Lexer::new(input);
         let current_token = lexer.next_token();
 
         Self {

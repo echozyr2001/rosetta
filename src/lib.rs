@@ -17,9 +17,8 @@ pub use codegen::{
 };
 pub use dom::DomNode;
 pub use error::{MarkdownError, Result};
-pub use lexer::{Lexer, Position, Token};
-pub use nom_parser::NomParser;
 pub use lexer::{Lexer, Position, token::Token};
+pub use nom_parser::NomParser;
 pub use parser::ParserConfig;
 pub use performance::{ParallelConfig, PerformanceOptimizer, ZeroCopyStr};
 
