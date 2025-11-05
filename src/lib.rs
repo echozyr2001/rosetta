@@ -3,6 +3,7 @@ pub mod ast;
 pub mod codegen;
 pub mod dom;
 pub mod error;
+pub mod ir;
 pub mod lexer;
 pub mod parser;
 pub mod performance;
@@ -14,6 +15,11 @@ pub use codegen::{
 };
 pub use dom::DomNode;
 pub use error::{MarkdownError, Result};
+pub use ir::{
+    AlignmentAxis, Block as WorkspaceBlock, BlockId, BlockKind, ContentPayload, Dimension,
+    InlineMark, InlineSpan, LayoutAlignment, LayoutMetadata, LayoutSize, MetadataMap,
+    MetadataValue, Space, SpaceId, StyleHooks, Workspace, WorkspaceId, WorkspaceTransformer,
+};
 pub use lexer::{Lexer, Position, Token};
 pub use parser::ParserConfig;
 pub use performance::{ParallelConfig, PerformanceOptimizer, ZeroCopyStr};
