@@ -70,6 +70,7 @@ pub struct AtxHeadingToken<'input> {
     pub raw_marker: &'input str,
     pub raw_content: &'input str,
     pub closing_sequence: &'input str,
+    pub position: crate::lexer::Position,
 }
 
 /// Setext underline marker (CommonMark §4.3).
@@ -80,6 +81,7 @@ pub struct SetextHeadingToken<'input> {
     pub marker_count: usize,
     pub leading_whitespace: usize,
     pub raw_underline: &'input str,
+    pub position: crate::lexer::Position,
 }
 
 /// Indented or fenced code block info (CommonMark §§4.4–4.5).
@@ -92,6 +94,7 @@ pub struct CodeBlockToken<'input> {
     pub raw_content: &'input str,
     pub indent_width: usize,
     pub contains_tab: bool,
+    pub position: crate::lexer::Position,
 }
 
 /// Block quote marker (CommonMark §5.1).
@@ -100,6 +103,7 @@ pub struct BlockQuoteToken {
     pub depth: usize,
     pub marker_offset: usize,
     pub spaces_after_marker: usize,
+    pub position: crate::lexer::Position,
 }
 
 /// Types of list markers.
@@ -116,6 +120,7 @@ pub struct ListMarkerToken<'input> {
     pub marker_offset: usize,
     pub spaces_after_marker: usize,
     pub ordinal_span: Option<&'input str>,
+    pub position: crate::lexer::Position,
 }
 
 /// Thematic break marker (CommonMark §4.1).
@@ -124,6 +129,7 @@ pub struct ThematicBreakToken {
     pub marker_char: char,
     pub marker_count: usize,
     pub leading_whitespace: usize,
+    pub position: crate::lexer::Position,
 }
 
 /// HTML block categories (CommonMark §4.6).
@@ -143,6 +149,7 @@ pub enum HtmlBlockKind {
 pub struct HtmlBlockToken<'input> {
     pub kind: HtmlBlockKind,
     pub raw: &'input str,
+    pub position: crate::lexer::Position,
 }
 
 /// Link reference definition components (CommonMark §4.7).
@@ -152,12 +159,14 @@ pub struct LinkReferenceDefinitionToken<'input> {
     pub destination: &'input str,
     pub title: Option<&'input str>,
     pub marker_offset: usize,
+    pub position: crate::lexer::Position,
 }
 
 /// Plain text lexeme emitted by the lexer (CommonMark §6).
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextToken<'input> {
     pub lexeme: &'input str,
+    pub position: crate::lexer::Position,
 }
 
 /// Runs of spaces or tabs (CommonMark §2.1).
@@ -165,15 +174,20 @@ pub struct TextToken<'input> {
 pub struct WhitespaceToken<'input> {
     pub lexeme: &'input str,
     pub contains_tab: bool,
+    pub position: crate::lexer::Position,
 }
 
 /// Soft line break token (CommonMark §6.9).
 #[derive(Debug, Clone, PartialEq)]
-pub struct SoftBreakToken;
+pub struct SoftBreakToken {
+    pub position: crate::lexer::Position,
+}
 
 /// Hard line break token (CommonMark §6.8).
 #[derive(Debug, Clone, PartialEq)]
-pub struct HardBreakToken;
+pub struct HardBreakToken {
+    pub position: crate::lexer::Position,
+}
 
 /// Whether an emphasis delimiter can open/close (CommonMark §6.4).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -190,6 +204,7 @@ pub struct EmphasisDelimiterToken {
     pub marker: char,
     pub run_length: usize,
     pub mutation: EmphasisMutation,
+    pub position: crate::lexer::Position,
 }
 
 /// Inline code span payload (CommonMark §6.5).
@@ -197,12 +212,14 @@ pub struct EmphasisDelimiterToken {
 pub struct CodeSpanToken<'input> {
     pub content: &'input str,
     pub backtick_count: usize,
+    pub position: crate::lexer::Position,
 }
 
 /// Inline code delimiter run (CommonMark §6.5).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CodeSpanDelimiterToken {
     pub backtick_count: usize,
+    pub position: crate::lexer::Position,
 }
 
 /// Autolink classification (CommonMark §6.6).
@@ -217,6 +234,7 @@ pub enum AutolinkKind {
 pub struct AutolinkToken<'input> {
     pub kind: AutolinkKind,
     pub lexeme: &'input str,
+    pub position: crate::lexer::Position,
 }
 
 /// Named or numeric character reference (CommonMark §6.2).
@@ -224,18 +242,21 @@ pub struct AutolinkToken<'input> {
 pub struct EntityToken<'input> {
     pub raw: &'input str,
     pub resolved: Option<char>,
+    pub position: crate::lexer::Position,
 }
 
 /// Escaped character (CommonMark §6.1).
 #[derive(Debug, Clone, PartialEq)]
 pub struct EscapeSequenceToken {
     pub escaped: char,
+    pub position: crate::lexer::Position,
 }
 
 /// Raw inline HTML chunk (CommonMark §6.7).
 #[derive(Debug, Clone, PartialEq)]
 pub struct HtmlInlineToken<'input> {
     pub raw: &'input str,
+    pub position: crate::lexer::Position,
 }
 
 /// Link label delimiter classification (CommonMark §6.10).
@@ -249,17 +270,21 @@ pub enum LinkLabelDelimiter {
 #[derive(Debug, Clone, PartialEq)]
 pub struct LinkDestinationToken<'input> {
     pub raw: &'input str,
+    pub position: crate::lexer::Position,
 }
 
 /// Link title chunk (CommonMark §6.10).
 #[derive(Debug, Clone, PartialEq)]
 pub struct LinkTitleToken<'input> {
     pub raw: &'input str,
+    pub position: crate::lexer::Position,
 }
 
 /// Image marker `!` (CommonMark §6.10).
 #[derive(Debug, Clone, PartialEq)]
-pub struct ImageMarkerToken;
+pub struct ImageMarkerToken {
+    pub position: crate::lexer::Position,
+}
 
 /// Line ending classification (CommonMark §2.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -273,6 +298,7 @@ pub enum LineEndingKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct LineEndingToken {
     pub kind: LineEndingKind,
+    pub position: crate::lexer::Position,
 }
 
 /// Indentation encountered at the start of a line (CommonMark §2.1).
@@ -280,10 +306,12 @@ pub struct LineEndingToken {
 pub struct IndentToken {
     pub visual_width: usize,
     pub contains_tab: bool,
+    pub position: crate::lexer::Position,
 }
 
 /// Inline punctuation marker (CommonMark §6).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PunctuationToken {
     pub ch: char,
+    pub position: crate::lexer::Position,
 }

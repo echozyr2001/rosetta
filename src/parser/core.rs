@@ -13,6 +13,21 @@ use crate::error::{ErrorHandler, Result};
 use crate::lexer::Position;
 
 /// Helper function to create position information from input offset
+///
+/// **DEPRECATED**: This function is only needed for the legacy nom-based parser
+/// that directly parses strings without using Lexer.
+///
+/// **CGP Design Note**: Following Context-Generic Programming principles, parsers
+/// that use Lexer should get position information from tokens via the
+/// `TokenType::position()` trait method instead of recalculating it from strings.
+///
+/// This parser (`core.rs::Parser`) is a legacy implementation that directly
+/// parses strings using nom. If you're using a parser that goes through Lexer
+/// (like `adapters.rs::DefaultParsingContext`), you should get position from
+/// tokens: `token.position()` or `context.current_token()?.position()`.
+///
+/// **Future Migration**: When migrating this parser to use Lexer, this function
+/// should be removed and all position information should come from tokens.
 fn create_position(original_input: &str, current_input: &str) -> Option<Position> {
     // Calculate the offset by finding the difference in pointer positions
     let offset = original_input.len() - current_input.len();
@@ -53,6 +68,36 @@ fn create_position(original_input: &str, current_input: &str) -> Option<Position
 }
 
 /// Enhanced nom-based parser supporting comprehensive CommonMark constructs.
+///
+/// **Parsing Paradigm**: This parser uses a **Parser Combinator** approach (nom library),
+/// which combines lexical and syntactic analysis in one step. This is different from
+/// the traditional two-phase approach (Lexer → Parser) used in `adapters.rs`.
+///
+/// **Key Differences**:
+/// - **This parser**: String → (inline lexing + parsing) → AST (no Token intermediate representation)
+/// - **Lexer-based parser**: String → Lexer → Token sequence → Parser → AST
+///
+/// **Important Note**: Nom does NOT "skip" lexical analysis. Instead, it:
+/// - Performs lexical recognition inline within syntax rules
+/// - Example: `many1(char('#'))` performs lexical recognition (identifying multiple '#')
+///   but without creating an explicit Token type
+/// - The lexical rules are embedded directly in syntax rules
+///
+/// **Why it doesn't use Lexer**:
+/// - Nom parser combinators combine lexical and syntactic analysis in one step
+/// - Lexical rules (like `many1(char('#'))`) are embedded directly in syntax rules
+/// - No explicit Token type is needed - patterns are recognized and immediately used
+///   to build AST nodes
+///
+/// **Trade-offs**:
+/// - ✅ Simpler: No need to define Token types
+/// - ✅ Concise: Lexical and syntactic rules combined
+/// - ❌ Position info must be calculated manually (`create_position`)
+/// - ❌ Cannot reuse lexical analysis output
+/// - ❌ Less compatible with CGP principles (hard to decouple via traits)
+///
+/// **Future Consideration**: For better CGP compliance and position tracking,
+/// consider migrating to the Lexer-based approach in `adapters.rs`.
 pub struct Parser<'input> {
     input: &'input str,
     original_input: &'input str,

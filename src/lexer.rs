@@ -13,9 +13,10 @@ use nom::sequence::{pair, preceded, tuple};
 
 use token::{
     AtxHeadingToken, AutolinkKind, AutolinkToken, BlockQuoteToken, CodeBlockToken, CodeSpanToken,
-    EmphasisDelimiterToken, EmphasisMutation, EntityToken, EscapeSequenceToken, HtmlInlineToken,
-    IndentToken, LineEndingKind, LineEndingToken, ListKind, ListMarkerToken, SetextHeadingToken,
-    TextToken, ThematicBreakToken, Token, WhitespaceToken,
+    EmphasisDelimiterToken, EmphasisMutation, EntityToken, EscapeSequenceToken, HardBreakToken,
+    HtmlInlineToken, ImageMarkerToken, IndentToken, LineEndingKind, LineEndingToken, ListKind,
+    ListMarkerToken, SetextHeadingToken, SoftBreakToken, TextToken, ThematicBreakToken, Token,
+    WhitespaceToken,
 };
 use unicode_segmentation::{GraphemeIndices, UnicodeSegmentation};
 
@@ -212,12 +213,116 @@ impl<'input> Lexer<'input> {
         self.position.offset = target_offset;
     }
 
+    /// Helper function to add position to a token
+    fn add_position_to_token(token: Token<'input>, position: Position) -> Token<'input> {
+        match token {
+            Token::AtxHeading(mut t) => {
+                t.position = position;
+                Token::AtxHeading(t)
+            }
+            Token::SetextHeading(mut t) => {
+                t.position = position;
+                Token::SetextHeading(t)
+            }
+            Token::CodeBlock(mut t) => {
+                t.position = position;
+                Token::CodeBlock(t)
+            }
+            Token::BlockQuote(mut t) => {
+                t.position = position;
+                Token::BlockQuote(t)
+            }
+            Token::ListMarker(mut t) => {
+                t.position = position;
+                Token::ListMarker(t)
+            }
+            Token::ThematicBreak(mut t) => {
+                t.position = position;
+                Token::ThematicBreak(t)
+            }
+            Token::HtmlBlock(mut t) => {
+                t.position = position;
+                Token::HtmlBlock(t)
+            }
+            Token::LinkReferenceDefinition(mut t) => {
+                t.position = position;
+                Token::LinkReferenceDefinition(t)
+            }
+            Token::Text(mut t) => {
+                t.position = position;
+                Token::Text(t)
+            }
+            Token::Whitespace(mut t) => {
+                t.position = position;
+                Token::Whitespace(t)
+            }
+            Token::SoftBreak(_) => Token::SoftBreak(SoftBreakToken { position }),
+            Token::HardBreak(_) => Token::HardBreak(HardBreakToken { position }),
+            Token::EmphasisDelimiter(mut t) => {
+                t.position = position;
+                Token::EmphasisDelimiter(t)
+            }
+            Token::CodeSpan(mut t) => {
+                t.position = position;
+                Token::CodeSpan(t)
+            }
+            Token::CodeSpanDelimiter(mut t) => {
+                t.position = position;
+                Token::CodeSpanDelimiter(t)
+            }
+            Token::Autolink(mut t) => {
+                t.position = position;
+                Token::Autolink(t)
+            }
+            Token::Entity(mut t) => {
+                t.position = position;
+                Token::Entity(t)
+            }
+            Token::EscapeSequence(mut t) => {
+                t.position = position;
+                Token::EscapeSequence(t)
+            }
+            Token::HtmlInline(mut t) => {
+                t.position = position;
+                Token::HtmlInline(t)
+            }
+            Token::LinkDestination(mut t) => {
+                t.position = position;
+                Token::LinkDestination(t)
+            }
+            Token::LinkTitle(mut t) => {
+                t.position = position;
+                Token::LinkTitle(t)
+            }
+            Token::ImageMarker(_) => Token::ImageMarker(ImageMarkerToken { position }),
+            Token::LineEnding(mut t) => {
+                t.position = position;
+                Token::LineEnding(t)
+            }
+            Token::Indent(mut t) => {
+                t.position = position;
+                Token::Indent(t)
+            }
+            Token::Punctuation(mut t) => {
+                t.position = position;
+                Token::Punctuation(t)
+            }
+            Token::LinkLabelDelimiter(_) => {
+                // LinkLabelDelimiter is an enum without position, so we can't add position to it
+                // This is acceptable as it's typically a delimiter token that doesn't need position
+                token
+            }
+            Token::Eof => Token::Eof,
+        }
+    }
+
     pub fn next_token(&mut self) -> Option<Token<'input>> {
         if self.byte_position() >= self.input.len() {
             return Some(Token::Eof);
         }
 
         let current = &self.input[self.byte_position()..];
+        let start_position = self.position; // Save position before parsing
 
         // Try parsers in order of precedence.
 
@@ -225,7 +330,7 @@ impl<'input> Lexer<'input> {
         if let Ok((remaining, token)) = parse_newline(current) {
             let consumed = current.len() - remaining.len();
             self.update_position(consumed);
-            return Some(token);
+            return Some(Self::add_position_to_token(token, start_position));
         }
 
         // Indentation at start of line
@@ -234,7 +339,7 @@ impl<'input> Lexer<'input> {
         {
             let consumed = current.len() - remaining.len();
             self.update_position(consumed);
-            return Some(token);
+            return Some(Self::add_position_to_token(token, start_position));
         }
 
         // Block-level constructs (only at line start or after indentation)
@@ -243,42 +348,42 @@ impl<'input> Lexer<'input> {
             if let Ok((remaining, token)) = parse_list_marker(current) {
                 let consumed = current.len() - remaining.len();
                 self.update_position(consumed);
-                return Some(token);
+                return Some(Self::add_position_to_token(token, start_position));
             }
 
             // ATX headings
             if let Ok((remaining, token)) = parse_atx_heading(current) {
                 let consumed = current.len() - remaining.len();
                 self.update_position(consumed);
-                return Some(token);
+                return Some(Self::add_position_to_token(token, start_position));
             }
 
             // Code fences
             if let Ok((remaining, token)) = parse_code_fence(current) {
                 let consumed = current.len() - remaining.len();
                 self.update_position(consumed);
-                return Some(token);
+                return Some(Self::add_position_to_token(token, start_position));
             }
 
             // Block quotes
             if let Ok((remaining, token)) = parse_blockquote(current) {
                 let consumed = current.len() - remaining.len();
                 self.update_position(consumed);
-                return Some(token);
+                return Some(Self::add_position_to_token(token, start_position));
             }
 
             // Thematic breaks
             if let Ok((remaining, token)) = parse_thematic_break(current) {
                 let consumed = current.len() - remaining.len();
                 self.update_position(consumed);
-                return Some(token);
+                return Some(Self::add_position_to_token(token, start_position));
             }
 
             // Setext heading underlines (try these last as they can conflict with other constructs)
             if let Ok((remaining, token)) = parse_setext_heading(current) {
                 let consumed = current.len() - remaining.len();
                 self.update_position(consumed);
-                return Some(token);
+                return Some(Self::add_position_to_token(token, start_position));
             }
         }
 
@@ -288,56 +393,56 @@ impl<'input> Lexer<'input> {
         if let Ok((remaining, token)) = parse_escape_sequence(current) {
             let consumed = current.len() - remaining.len();
             self.update_position(consumed);
-            return Some(token);
+            return Some(Self::add_position_to_token(token, start_position));
         }
 
         // Code spans (high priority to avoid conflicts with emphasis)
         if let Ok((remaining, token)) = parse_code_span(current) {
             let consumed = current.len() - remaining.len();
             self.update_position(consumed);
-            return Some(token);
+            return Some(Self::add_position_to_token(token, start_position));
         }
 
         // Autolinks (before HTML inline to catch <url> patterns)
         if let Ok((remaining, token)) = parse_autolink(current) {
             let consumed = current.len() - remaining.len();
             self.update_position(consumed);
-            return Some(token);
+            return Some(Self::add_position_to_token(token, start_position));
         }
 
         // HTML entities (before HTML inline)
         if let Ok((remaining, token)) = parse_entity(current) {
             let consumed = current.len() - remaining.len();
             self.update_position(consumed);
-            return Some(token);
+            return Some(Self::add_position_to_token(token, start_position));
         }
 
         // Inline HTML
         if let Ok((remaining, token)) = parse_html_inline(current) {
             let consumed = current.len() - remaining.len();
             self.update_position(consumed);
-            return Some(token);
+            return Some(Self::add_position_to_token(token, start_position));
         }
 
         // Emphasis delimiters (after code spans to avoid conflicts)
         if let Ok((remaining, token)) = parse_emphasis_delimiter(current) {
             let consumed = current.len() - remaining.len();
             self.update_position(consumed);
-            return Some(token);
+            return Some(Self::add_position_to_token(token, start_position));
         }
 
         // Whitespace
         if let Ok((remaining, token)) = parse_whitespace(current) {
             let consumed = current.len() - remaining.len();
             self.update_position(consumed);
-            return Some(token);
+            return Some(Self::add_position_to_token(token, start_position));
         }
 
         // Fallback to text
         if let Ok((remaining, token)) = parse_text(current) {
             let consumed = current.len() - remaining.len();
             self.update_position(consumed);
-            return Some(token);
+            return Some(Self::add_position_to_token(token, start_position));
         }
 
         // Unable to parse; advance one byte to avoid infinite loop.
@@ -345,6 +450,7 @@ impl<'input> Lexer<'input> {
         self.update_position(1);
         Some(Token::Text(TextToken {
             lexeme: &self.input[old_pos..old_pos + 1],
+            position: start_position,
         }))
     }
 
@@ -382,7 +488,10 @@ fn parse_newline(input: &str) -> IResult<&str, Token<'_>> {
             "\r\n" => LineEndingKind::CarriageReturnLineFeed,
             _ => LineEndingKind::LineFeed,
         };
-        Token::LineEnding(LineEndingToken { kind })
+        Token::LineEnding(LineEndingToken {
+            kind,
+            position: Position::default(), // Will be replaced in add_position_to_token
+        })
     })(input)
 }
 
@@ -393,6 +502,7 @@ fn parse_whitespace(input: &str) -> IResult<&str, Token<'_>> {
             Token::Whitespace(WhitespaceToken {
                 lexeme: slice,
                 contains_tab: slice.contains('\t'),
+                position: Position::default(), // Will be replaced in add_position_to_token
             })
         },
     )(input)
@@ -415,6 +525,7 @@ fn parse_atx_heading(input: &str) -> IResult<&str, Token<'_>> {
                 raw_marker,
                 raw_content: raw_content.trim_end(),
                 closing_sequence,
+                position: Position::default(), // Will be replaced in add_position_to_token
             })
         },
     )(input)
@@ -430,6 +541,7 @@ fn parse_blockquote(input: &str) -> IResult<&str, Token<'_>> {
             depth: 1,
             marker_offset: 0,
             spaces_after_marker: spaces.len(),
+            position: Position::default(), // Will be replaced in add_position_to_token
         })
     })(input)
 }
@@ -486,6 +598,7 @@ fn parse_thematic_break(input: &str) -> IResult<&str, Token<'_>> {
                 marker_char,
                 marker_count,
                 leading_whitespace,
+                position: Position::default(), // Will be replaced in add_position_to_token
             })
         },
     )(input)
@@ -510,6 +623,7 @@ fn parse_code_fence(input: &str) -> IResult<&str, Token<'_>> {
                 raw_content: body,
                 indent_width: 0,
                 contains_tab: false,
+                position: Position::default(), // Will be replaced in add_position_to_token
             })
         },
     )(input)
@@ -517,7 +631,10 @@ fn parse_code_fence(input: &str) -> IResult<&str, Token<'_>> {
 
 fn parse_text(input: &str) -> IResult<&str, Token<'_>> {
     map(is_not("\n"), |slice: &str| {
-        Token::Text(TextToken { lexeme: slice })
+        Token::Text(TextToken {
+            lexeme: slice,
+            position: Position::default(), // Will be replaced in add_position_to_token
+        })
     })(input)
 }
 
@@ -533,6 +650,7 @@ fn parse_bullet_marker(input: &str) -> IResult<&str, Token<'_>> {
                 marker_offset: 0,
                 spaces_after_marker: spaces.len(),
                 ordinal_span: None,
+                position: Position::default(), // Will be replaced in add_position_to_token
             })
         },
     )(input)
@@ -552,6 +670,7 @@ fn parse_ordered_marker(input: &str) -> IResult<&str, Token<'_>> {
                 marker_offset: 0,
                 spaces_after_marker: spaces.len(),
                 ordinal_span: Some(digits),
+                position: Position::default(), // Will be replaced in add_position_to_token
             })
         },
     )(input)
@@ -578,6 +697,7 @@ fn parse_indent(input: &str) -> IResult<&str, Token<'_>> {
             Token::Indent(IndentToken {
                 visual_width,
                 contains_tab,
+                position: Position::default(), // Will be replaced in add_position_to_token
             })
         },
     )(input)
@@ -608,6 +728,7 @@ fn parse_setext_heading(input: &str) -> IResult<&str, Token<'_>> {
                 marker_count,
                 leading_whitespace,
                 raw_underline: matched,
+                position: Position::default(), // Will be replaced in add_position_to_token
             })
         },
     )(input)
@@ -624,6 +745,7 @@ fn parse_escape_sequence(input: &str) -> IResult<&str, Token<'_>> {
         |escaped_char| {
             Token::EscapeSequence(EscapeSequenceToken {
                 escaped: escaped_char,
+                position: Position::default(), // Will be replaced in add_position_to_token
             })
         },
     )(input)
@@ -649,6 +771,7 @@ fn parse_code_span(input: &str) -> IResult<&str, Token<'_>> {
             Token::CodeSpan(CodeSpanToken {
                 content: trimmed_content,
                 backtick_count: 1,
+                position: Position::default(), // Will be replaced in add_position_to_token
             })
         },
     )(input)
@@ -672,6 +795,7 @@ fn parse_emphasis_delimiter(input: &str) -> IResult<&str, Token<'_>> {
                 marker,
                 run_length,
                 mutation,
+                position: Position::default(), // Will be replaced in add_position_to_token
             })
         },
     )(input)
@@ -705,6 +829,7 @@ fn parse_autolink(input: &str) -> IResult<&str, Token<'_>> {
             Token::Autolink(AutolinkToken {
                 kind,
                 lexeme: content,
+                position: Position::default(), // Will be replaced in add_position_to_token
             })
         },
     )(input)
@@ -736,6 +861,7 @@ fn parse_entity(input: &str) -> IResult<&str, Token<'_>> {
             Token::Entity(EntityToken {
                 raw: entity_content,
                 resolved: None, // Simplified - would need entity resolution
+                position: Position::default(), // Will be replaced in add_position_to_token
             })
         },
     )(input)
@@ -768,7 +894,8 @@ fn parse_html_inline(input: &str) -> IResult<&str, Token<'_>> {
 
             // This is a simplified version - would need proper HTML tag parsing
             Token::HtmlInline(HtmlInlineToken {
-                raw: content, // In practice, this would include the full tag
+                raw: content,                  // In practice, this would include the full tag
+                position: Position::default(), // Will be replaced in add_position_to_token
             })
         },
     )(input)
@@ -873,12 +1000,14 @@ mod tests {
             tokens[1],
             Token::LineEnding(LineEndingToken {
                 kind: LineEndingKind::LineFeed,
+                ..
             })
         ));
         assert!(matches!(
             tokens[2],
             Token::Text(TextToken {
-                lexeme: "Paragraph"
+                lexeme: "Paragraph",
+                ..
             })
         ));
     }
@@ -898,7 +1027,7 @@ mod tests {
         ));
         assert!(matches!(
             tokens[1],
-            Token::Text(TextToken { lexeme: "item" })
+            Token::Text(TextToken { lexeme: "item", .. })
         ));
     }
 
@@ -921,7 +1050,7 @@ mod tests {
         ));
         assert!(matches!(
             tokens[1],
-            Token::Text(TextToken { lexeme: "item" })
+            Token::Text(TextToken { lexeme: "item", .. })
         ));
     }
 
@@ -987,7 +1116,8 @@ mod tests {
             tokens[0],
             Token::CodeSpan(CodeSpanToken {
                 content: "code",
-                backtick_count: 1
+                backtick_count: 1,
+                ..
             })
         ));
     }
@@ -1016,7 +1146,7 @@ mod tests {
 
         assert!(matches!(
             tokens[0],
-            Token::EscapeSequence(EscapeSequenceToken { escaped: '*' })
+            Token::EscapeSequence(EscapeSequenceToken { escaped: '*', .. })
         ));
     }
 
@@ -1030,7 +1160,8 @@ mod tests {
             tokens[0],
             Token::Autolink(AutolinkToken {
                 kind: AutolinkKind::Uri,
-                lexeme: "https://example.com"
+                lexeme: "https://example.com",
+                ..
             })
         ));
 
@@ -1042,7 +1173,8 @@ mod tests {
             tokens2[0],
             Token::Autolink(AutolinkToken {
                 kind: AutolinkKind::Email,
-                lexeme: "user@example.com"
+                lexeme: "user@example.com",
+                ..
             })
         ));
     }
@@ -1078,7 +1210,8 @@ mod tests {
             tokens[0],
             Token::Indent(IndentToken {
                 visual_width: 4,
-                contains_tab: false
+                contains_tab: false,
+                ..
             })
         ));
 
@@ -1090,7 +1223,8 @@ mod tests {
             tokens2[0],
             Token::Indent(IndentToken {
                 visual_width: 4,
-                contains_tab: true
+                contains_tab: true,
+                ..
             })
         ));
     }
