@@ -16,18 +16,18 @@ use crate::lexer::Position;
 fn create_position(original_input: &str, current_input: &str) -> Option<Position> {
     // Calculate the offset by finding the difference in pointer positions
     let offset = original_input.len() - current_input.len();
-    
+
     // If the current input is not a substring of the original, return None
     if offset > original_input.len() {
         return None;
     }
-    
+
     // Calculate line and column by iterating through the consumed portion
     let consumed = &original_input[..offset];
     let mut line = 1;
     let mut column = 1;
     let mut chars = consumed.chars().peekable();
-    
+
     while let Some(ch) = chars.next() {
         if ch == '\n' {
             line += 1;
@@ -44,7 +44,7 @@ fn create_position(original_input: &str, current_input: &str) -> Option<Position
             column += 1;
         }
     }
-    
+
     Some(Position {
         line,
         column,
@@ -150,9 +150,7 @@ impl<'input> Parser<'input> {
     pub fn handle_parse_warning(&mut self, message: String, input: &str) {
         let error_info =
             crate::error::ErrorInfo::new(crate::error::ErrorSeverity::Warning, message)
-                .with_position(
-                    create_position(self.original_input, input).unwrap_or_else(Position::new),
-                );
+                .with_position(create_position(self.original_input, input).unwrap_or_default());
 
         self.error_handler.handle_error(&error_info);
     }
@@ -160,9 +158,7 @@ impl<'input> Parser<'input> {
     /// Handle a parsing error with the error handler
     pub fn handle_parse_error(&mut self, message: String, input: &str) {
         let error_info = crate::error::ErrorInfo::new(crate::error::ErrorSeverity::Error, message)
-            .with_position(
-                create_position(self.original_input, input).unwrap_or_else(Position::new),
-            );
+            .with_position(create_position(self.original_input, input).unwrap_or_default());
 
         self.error_handler.handle_error(&error_info);
     }
@@ -750,28 +746,28 @@ mod tests {
         assert_eq!(pos.line, 1);
         assert_eq!(pos.column, 1);
         assert_eq!(pos.offset, 0);
-        
+
         // Test position after first line
         let current = "World\nTest";
         let pos = create_position(original, current).unwrap();
         assert_eq!(pos.line, 2);
         assert_eq!(pos.column, 1);
         assert_eq!(pos.offset, 6); // "Hello\n" = 6 characters
-        
+
         // Test position in the middle of second line
         let current = "orld\nTest";
         let pos = create_position(original, current).unwrap();
         assert_eq!(pos.line, 2);
         assert_eq!(pos.column, 2);
         assert_eq!(pos.offset, 7); // "Hello\nW" = 7 characters
-        
+
         // Test position at the end
         let current = "";
         let pos = create_position(original, current).unwrap();
         assert_eq!(pos.line, 3);
         assert_eq!(pos.column, 5);
         assert_eq!(pos.offset, original.len()); // Full length
-        
+
         // Test with Windows line endings
         let original_windows = "Hello\r\nWorld";
         let current_windows = "World";
@@ -786,13 +782,15 @@ mod tests {
         let input = "# First Heading\n\nSome paragraph text\n\n## Second Heading";
         let parser = Parser::with_defaults(input);
         let document = parser.parse().unwrap();
-        
+
         // Check that blocks have position information
         assert_eq!(document.blocks.len(), 3);
-        
+
         // First heading should have position information
         match &document.blocks[0] {
-            Block::Heading { position, level, .. } => {
+            Block::Heading {
+                position, level, ..
+            } => {
                 assert_eq!(*level, 1);
                 assert!(position.is_some());
                 let pos = position.unwrap();
@@ -802,7 +800,7 @@ mod tests {
             }
             _ => panic!("Expected first block to be a heading"),
         }
-        
+
         // Paragraph should have position information
         match &document.blocks[1] {
             Block::Paragraph { position, .. } => {
@@ -814,10 +812,12 @@ mod tests {
             }
             _ => panic!("Expected second block to be a paragraph"),
         }
-        
+
         // Second heading should have position information
         match &document.blocks[2] {
-            Block::Heading { position, level, .. } => {
+            Block::Heading {
+                position, level, ..
+            } => {
                 assert_eq!(*level, 2);
                 assert!(position.is_some());
                 let pos = position.unwrap();
@@ -833,19 +833,19 @@ mod tests {
     fn test_position_with_unicode_characters() {
         // Test with Unicode characters including emoji and Chinese characters
         let original = "Hello 🌍\nWorld 测试\nTest";
-        
+
         // Test position after emoji line
         let current = "\nWorld 测试\nTest";
         let pos = create_position(original, current).unwrap();
         assert_eq!(pos.line, 1);
         assert_eq!(pos.column, 8); // "Hello 🌍" = 7 chars + 1 (1-based column)
-        
+
         // Test position after Chinese characters line
         let current = "\nTest";
         let pos = create_position(original, current).unwrap();
         assert_eq!(pos.line, 2);
         assert_eq!(pos.column, 9); // "World 测试" = 8 chars + 1 (1-based column)
-        
+
         // Test position at the end
         let current = "";
         let pos = create_position(original, current).unwrap();
