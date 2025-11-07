@@ -239,7 +239,7 @@ impl<R: Read> StreamingParser<R> {
 
         // Parse the chunk
         let parser_config = self.config.parser_config.clone();
-        let parser = Parser::new(&process_text, parser_config);
+        let parser = Parser::new(&process_text, parser_config)?;
         let chunk_document = parser.parse()?;
 
         // Update position tracking
@@ -277,7 +277,7 @@ impl<R: Read> StreamingParser<R> {
         // Parse any remaining content in boundary buffer
         let parser_config = self.config.parser_config.clone();
         let boundary_content = self.boundary_buffer.clone();
-        let parser = Parser::new(&boundary_content, parser_config);
+        let parser = Parser::new(&boundary_content, parser_config)?;
         let final_document = parser.parse()?;
 
         self.update_position(&boundary_content);

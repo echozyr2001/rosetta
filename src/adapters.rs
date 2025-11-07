@@ -54,6 +54,15 @@ impl<'input> HasTokenProvider for LexerAdapter<'input> {
     }
 
     fn current_position(&self) -> Position {
+        // Prefer position from current token if available (CGP principle)
+        // This ensures we use the position information stored in the token
+        // rather than getting it from the lexer
+        if let Some(token) = self.current_token()
+            && let Some(position) = token.position()
+        {
+            return position;
+        }
+        // Fallback to lexer position if token doesn't have position
         self.lexer.position()
     }
 }
