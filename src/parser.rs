@@ -1,7 +1,10 @@
 // Parser module with submodules for better organization using Rust 2018 module system
 mod config;
 mod core;
+mod token_parser;
 mod utils;
+
+pub mod cgp_parser;
 
 #[cfg(test)]
 mod tests;
@@ -10,19 +13,22 @@ mod tests;
 pub use config::ParserConfig;
 pub use core::Parser;
 pub use utils::ParagraphBuilder;
-// NomParser is now the main Parser
 
 use crate::ast::Document;
 use crate::error::{ErrorHandler, Result};
 
-/// Parse Markdown using the default parser configuration.
+/// Parse Markdown using the CGP context-based approach.
+///
+/// This function creates a `DefaultParsingContext` (including running `Lexer` to generate
+/// all tokens), then uses nom combinators to parse the Token sequence.
+/// This represents the Token-driven parsing paradigm with CGP architecture.
 pub fn parse(markdown: &str) -> Result<Document> {
     Parser::with_defaults(markdown).parse()
 }
 
 /// Parse function with custom configuration.
 pub fn parse_with_config(markdown: &str, config: ParserConfig) -> Result<Document> {
-    let parser = Parser::new(markdown, config);
+    let parser = Parser::new(markdown, config)?;
     parser.parse()
 }
 

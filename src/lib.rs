@@ -17,8 +17,7 @@ pub use codegen::{
 pub use dom::DomNode;
 pub use error::{MarkdownError, Result};
 pub use lexer::{Lexer, Position, token::Token};
-pub use parser::Parser;
-pub use parser::ParserConfig;
+pub use parser::{Parser, ParserConfig, parse};
 pub use performance::{ParallelConfig, PerformanceOptimizer, ZeroCopyStr};
 
 // Public API configuration structs
