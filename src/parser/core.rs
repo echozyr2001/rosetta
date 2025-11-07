@@ -79,17 +79,7 @@ impl<'input> Parser<'input> {
     /// - Rich information from tokens (position, type, content)
     /// - Clean separation between lexical and syntactic analysis
     pub fn parse(mut self) -> Result<Document> {
-        // Collect all tokens from the context
-        let mut tokens = Vec::new();
-        while !self.context.is_at_end() {
-            if let Some(token) = self.context.current_token() {
-                tokens.push(token.clone());
-            }
-            self.context.advance()?;
-        }
-
-        // Parse the token sequence using nom combinators
-        crate::parser::token_parser::parse_tokens(&tokens)
+        crate::parser::cgp_parser::parse_document(&mut self.context)
     }
 
     /// Handle a parsing warning with the error handler
