@@ -244,8 +244,8 @@ fn preserves_position_information() {
             | Block::List { position, .. }
             | Block::ThematicBreak { position, .. }
             | Block::HtmlBlock { position, .. } => {
-                // CGP parser provides position information from tokens
-                // Position may be Some or None depending on the token
+                // The token-driven parser provides position information from tokens
+                // Position may be Some or None depending on the originating token
                 let _ = position; // Just verify the field exists
             }
         }

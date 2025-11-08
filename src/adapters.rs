@@ -1,7 +1,7 @@
-/// Adapters for existing Lexer and AST to work with CGP traits
+/// Adapters for existing Lexer and AST to work with component-based traits
 ///
 /// This module demonstrates how to wrap existing implementations
-/// to make them compatible with the CGP trait system.
+/// to make them compatible with the component trait system.
 use crate::ast::{Block, Document, Inline};
 use crate::error::{ErrorHandler, Result};
 use crate::lexer::{Lexer, Position, token::Token};
@@ -9,7 +9,8 @@ use crate::parser::ParserConfig;
 use crate::traits::*;
 use std::marker::PhantomData;
 
-/// Adapter that makes the existing Lexer compatible with HasTokenProvider
+/// Adapter that makes the existing Lexer compatible with the token
+/// provider component.
 pub struct LexerAdapter<'input> {
     lexer: Lexer<'input>,
     current_token: Option<Token<'input>>,
@@ -26,14 +27,12 @@ impl<'input> LexerAdapter<'input> {
     }
 }
 
-impl<'input> HasTokenProvider for LexerAdapter<'input> {
-    type Token = Token<'input>;
-
-    fn current_token(&self) -> Option<&Self::Token> {
+impl<'input> LexerAdapter<'input> {
+    pub fn current_token(&self) -> Option<&Token<'input>> {
         self.current_token.as_ref()
     }
 
-    fn next_token(&mut self) -> Result<Self::Token> {
+    pub fn next_token(&mut self) -> Result<Token<'input>> {
         let token = self.lexer.next_token().ok_or_else(|| {
             crate::error::MarkdownError::parse_error(
                 self.lexer.position(),
@@ -44,7 +43,7 @@ impl<'input> HasTokenProvider for LexerAdapter<'input> {
         Ok(token)
     }
 
-    fn peek_token(&mut self) -> Result<Self::Token> {
+    pub fn peek_token(&mut self) -> Result<Token<'input>> {
         self.lexer.peek_token().ok_or_else(|| {
             crate::error::MarkdownError::parse_error(
                 self.lexer.position(),
@@ -53,16 +52,12 @@ impl<'input> HasTokenProvider for LexerAdapter<'input> {
         })
     }
 
-    fn current_position(&self) -> Position {
-        // Prefer position from current token if available (CGP principle)
-        // This ensures we use the position information stored in the token
-        // rather than getting it from the lexer
+    pub fn current_position(&self) -> Position {
         if let Some(token) = self.current_token()
             && let Some(position) = token.position()
         {
             return position;
         }
-        // Fallback to lexer position if token doesn't have position
         self.lexer.position()
     }
 }
@@ -134,7 +129,7 @@ impl AstBuilder for DefaultAstBuilder {
         items: Vec<ListItem<Self::Block>>,
         position: Option<Position>,
     ) -> Self::Block {
-        // Convert CGP ListKind to AST ListKind
+        // Convert component ListKind to AST ListKind
         let ast_kind = match kind {
             ListKind::Bullet { marker } => crate::ast::ListKind::Bullet { marker },
             ListKind::Ordered { start, delimiter } => {
@@ -142,7 +137,7 @@ impl AstBuilder for DefaultAstBuilder {
             }
         };
 
-        // Convert CGP ListItem to AST ListItem
+        // Convert component ListItem to AST ListItem
         let ast_items = items
             .into_iter()
             .map(|item| crate::ast::ListItem {
@@ -214,6 +209,70 @@ impl AstBuilder for DefaultAstBuilder {
     }
 }
 
+/// Component registry for the default parsing context.
+pub struct DefaultComponents;
+
+pub struct DefaultTokenProviderDelegate;
+pub struct DefaultAstBuilderDelegate;
+pub struct DefaultParserConfigDelegate;
+pub struct DefaultErrorHandlerDelegate;
+
+impl DelegateComponent<TokenProviderComponent> for DefaultComponents {
+    type Delegate = DefaultTokenProviderDelegate;
+}
+
+impl DelegateComponent<AstBuilderComponent> for DefaultComponents {
+    type Delegate = DefaultAstBuilderDelegate;
+}
+
+impl DelegateComponent<ParserConfigComponent> for DefaultComponents {
+    type Delegate = DefaultParserConfigDelegate;
+}
+
+impl DelegateComponent<ErrorHandlerComponent> for DefaultComponents {
+    type Delegate = DefaultErrorHandlerDelegate;
+}
+
+impl<'input> IsProviderFor<TokenProviderComponent, DefaultParsingContext<'input>>
+    for DefaultComponents
+{
+}
+
+impl<'input> IsProviderFor<TokenProviderComponent, DefaultParsingContext<'input>>
+    for DefaultTokenProviderDelegate
+{
+}
+
+impl<'input> IsProviderFor<AstBuilderComponent, DefaultParsingContext<'input>>
+    for DefaultComponents
+{
+}
+
+impl<'input> IsProviderFor<AstBuilderComponent, DefaultParsingContext<'input>>
+    for DefaultAstBuilderDelegate
+{
+}
+
+impl<'input> IsProviderFor<ParserConfigComponent, DefaultParsingContext<'input>>
+    for DefaultComponents
+{
+}
+
+impl<'input> IsProviderFor<ParserConfigComponent, DefaultParsingContext<'input>>
+    for DefaultParserConfigDelegate
+{
+}
+
+impl<'input> IsProviderFor<ErrorHandlerComponent, DefaultParsingContext<'input>>
+    for DefaultComponents
+{
+}
+
+impl<'input> IsProviderFor<ErrorHandlerComponent, DefaultParsingContext<'input>>
+    for DefaultErrorHandlerDelegate
+{
+}
+
 /// Complete parsing context that combines all adapters
 pub struct DefaultParsingContext<'input> {
     token_provider: LexerAdapter<'input>,
@@ -239,54 +298,60 @@ impl<'input> DefaultParsingContext<'input> {
     }
 }
 
-impl<'input> HasTokenProvider for DefaultParsingContext<'input> {
+impl<'input> HasProvider for DefaultParsingContext<'input> {
+    type Components = DefaultComponents;
+}
+
+impl<'input> TokenProvider<DefaultParsingContext<'input>> for DefaultTokenProviderDelegate {
     type Token = Token<'input>;
 
-    fn current_token(&self) -> Option<&Self::Token> {
-        self.token_provider.current_token()
+    fn current_token<'a>(context: &'a DefaultParsingContext<'input>) -> Option<&'a Self::Token> {
+        context.token_provider.current_token()
     }
 
-    fn next_token(&mut self) -> Result<Self::Token> {
-        self.token_provider.next_token()
+    fn next_token(context: &mut DefaultParsingContext<'input>) -> Result<Self::Token> {
+        context.token_provider.next_token()
     }
 
-    fn peek_token(&mut self) -> Result<Self::Token> {
-        self.token_provider.peek_token()
+    fn peek_token(context: &mut DefaultParsingContext<'input>) -> Result<Self::Token> {
+        context.token_provider.peek_token()
     }
 
-    fn current_position(&self) -> Position {
-        self.token_provider.current_position()
+    fn current_position(context: &DefaultParsingContext<'input>) -> Position {
+        context.token_provider.current_position()
     }
 }
 
-impl<'input> HasAstBuilder for DefaultParsingContext<'input> {
+impl<'input> AstBuilderProvider<DefaultParsingContext<'input>> for DefaultAstBuilderDelegate {
     type Inline = Inline;
     type Block = Block;
     type Document = Document;
 
-    fn ast_builder(
-        &self,
-    ) -> &dyn AstBuilder<Inline = Self::Inline, Block = Self::Block, Document = Self::Document>
+    fn ast_builder<'a>(
+        context: &'a DefaultParsingContext<'input>,
+    ) -> &'a dyn AstBuilder<Inline = Self::Inline, Block = Self::Block, Document = Self::Document>
     {
-        &self.ast_builder
+        &context.ast_builder
     }
 }
 
-impl<'input> HasConfig for DefaultParsingContext<'input> {
+impl<'input> ParserConfigProvider<DefaultParsingContext<'input>> for DefaultParserConfigDelegate {
     type Config = ParserConfig;
 
-    fn config(&self) -> &Self::Config {
-        &self.config
+    fn parser_config<'a>(context: &'a DefaultParsingContext<'input>) -> &'a Self::Config {
+        &context.config
     }
 }
 
-impl<'input> HasErrorHandler for DefaultParsingContext<'input> {
-    fn error_handler(&self) -> &dyn ErrorHandler {
-        self.error_handler.as_ref()
+impl<'input> ErrorHandlerProvider<DefaultParsingContext<'input>> for DefaultErrorHandlerDelegate {
+    fn error_handler<'a>(context: &'a DefaultParsingContext<'input>) -> &'a dyn ErrorHandler {
+        context.error_handler.as_ref()
     }
 
-    fn error_handler_mut(&mut self) -> &mut dyn ErrorHandler {
-        self.error_handler.as_mut()
+    fn error_handler_mut<'a>(
+        context: &'a mut DefaultParsingContext<'input>,
+    ) -> &'a mut dyn ErrorHandler {
+        context.error_handler.as_mut()
     }
 }
 

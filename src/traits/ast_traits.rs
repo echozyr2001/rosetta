@@ -1,9 +1,11 @@
-/// Context-Generic Programming traits for AST layer decoupling
+/// Component-based traits for AST layer decoupling
 ///
 /// This module defines builder and visitor traits that decouple the parser
-/// from specific AST implementations following CGP principles.
+/// from specific AST implementations while using component abstractions.
 use crate::error::Result;
 use crate::lexer::Position;
+
+use super::component::{DelegateComponent, HasProvider, IsProviderFor};
 
 /// Trait representing an inline element in the AST.
 /// This allows different inline implementations to be used.
@@ -28,17 +30,67 @@ pub trait DocumentNode: Clone + std::fmt::Debug {
     fn blocks(&self) -> &[Self::Block];
 }
 
-/// Provider trait for contexts that can build AST nodes.
-/// This decouples the parser from the specific AST implementation.
-pub trait HasAstBuilder {
+/// Component marker for AST construction.
+pub struct AstBuilderComponent;
+
+/// Consumer trait for contexts capable of building AST nodes.
+pub trait CanBuildAst: HasProvider {
     type Inline: InlineNode;
     type Block: BlockNode;
     type Document: DocumentNode<Block = Self::Block>;
 
-    /// Get a reference to the AST builder
     fn ast_builder(
         &self,
     ) -> &dyn AstBuilder<Inline = Self::Inline, Block = Self::Block, Document = Self::Document>;
+}
+
+/// Provider trait implemented by component registries that offer AST building
+/// capabilities.
+pub trait AstBuilderProvider<Context>: IsProviderFor<AstBuilderComponent, Context> {
+    type Inline: InlineNode;
+    type Block: BlockNode;
+    type Document: DocumentNode<Block = Self::Block>;
+
+    #[allow(clippy::needless_lifetimes)]
+    fn ast_builder<'a>(
+        context: &'a Context,
+    ) -> &'a dyn AstBuilder<Inline = Self::Inline, Block = Self::Block, Document = Self::Document>;
+}
+
+impl<Context, Component> AstBuilderProvider<Context> for Component
+where
+    Context: Sized,
+    Component: DelegateComponent<AstBuilderComponent> + IsProviderFor<AstBuilderComponent, Context>,
+    Component::Delegate: AstBuilderProvider<Context>,
+{
+    type Inline = <Component::Delegate as AstBuilderProvider<Context>>::Inline;
+    type Block = <Component::Delegate as AstBuilderProvider<Context>>::Block;
+    type Document = <Component::Delegate as AstBuilderProvider<Context>>::Document;
+
+    #[allow(clippy::needless_lifetimes)]
+    fn ast_builder<'a>(
+        context: &'a Context,
+    ) -> &'a dyn AstBuilder<Inline = Self::Inline, Block = Self::Block, Document = Self::Document>
+    {
+        <Component::Delegate as AstBuilderProvider<Context>>::ast_builder(context)
+    }
+}
+
+impl<Context> CanBuildAst for Context
+where
+    Context: HasProvider,
+    Context::Components: AstBuilderProvider<Context>,
+{
+    type Inline = <Context::Components as AstBuilderProvider<Context>>::Inline;
+    type Block = <Context::Components as AstBuilderProvider<Context>>::Block;
+    type Document = <Context::Components as AstBuilderProvider<Context>>::Document;
+
+    fn ast_builder(
+        &self,
+    ) -> &dyn AstBuilder<Inline = Self::Inline, Block = Self::Block, Document = Self::Document>
+    {
+        <Context::Components as AstBuilderProvider<Context>>::ast_builder(self)
+    }
 }
 
 /// Builder trait for constructing AST nodes.
@@ -133,7 +185,7 @@ pub struct ListItem<Block> {
 /// This allows post-processing of AST nodes generically.
 pub trait AstTransformer<Context>
 where
-    Context: HasAstBuilder,
+    Context: CanBuildAst,
 {
     /// Transform a block node
     fn transform_block(context: &Context, block: Context::Block) -> Result<Context::Block>;
@@ -152,7 +204,7 @@ where
 /// This allows validation of AST nodes generically.
 pub trait AstValidator<Context>
 where
-    Context: HasAstBuilder,
+    Context: CanBuildAst,
 {
     /// Validate a block node
     fn validate_block(context: &Context, block: &Context::Block) -> Result<()>;

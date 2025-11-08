@@ -11,9 +11,8 @@ use unicode_segmentation::{GraphemeIndices, UnicodeSegmentation};
 /// Nom-powered lexer cursor that produces rich tokens with position tracking.
 ///
 /// This struct is the concrete implementation that bridges the pure parsing
-/// rules (in `rules.rs`) with the CGP-friendly token adapters. By keeping the
-/// state machine separate from the token definitions and parsing rules we make
-/// the CGP layering explicit:
+/// rules (in `rules.rs`) with the token adapters. By keeping the state machine
+/// separate from the token definitions and parsing rules we make the layering clear:
 ///
 /// ```text
 /// Source ➜ cursor (state machine) ➜ rules (pure nom parsers) ➜ tokens + positions
@@ -22,8 +21,8 @@ use unicode_segmentation::{GraphemeIndices, UnicodeSegmentation};
 /// The cursor owns the input and advances through it using Unicode grapheme
 /// segmentation so that line/column tracking stays correct for multi-byte
 /// characters. Each emitted token is annotated with the starting `Position` so
-/// that downstream CGP contexts can reason about source locations without
-/// depending on this concrete lexer implementation.
+/// that downstream contexts can reason about source locations without depending
+/// on this concrete lexer implementation.
 #[derive(Clone)]
 pub struct Lexer<'input> {
     input: &'input str,

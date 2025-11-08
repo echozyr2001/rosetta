@@ -5,21 +5,21 @@ use crate::error::{ErrorHandler, Result};
 use crate::lexer::Position;
 use crate::traits::*;
 
-/// Parser that uses CGP (Context-Generic Programming) principles.
+/// Parser that uses component-oriented context principles.
 ///
 /// This parser uses a two-phase approach:
 /// 1. Lexer → Token sequence
 /// 2. Parser → AST
 ///
-/// **Benefits of CGP approach**:
+/// **Benefits of this approach**:
 /// - ✅ Better position tracking
 /// - ✅ Reusable lexical analysis
 /// - ✅ Modular and testable via traits
 /// - ✅ Easy to extend and customize
 ///
 /// **Architecture**:
-/// - Uses `DefaultParsingContext` which combines all CGP traits
-/// - Delegates to `cgp_parser` for actual parsing logic
+/// - Uses `DefaultParsingContext` which combines all component traits
+/// - Delegates to `token_pipeline` for actual parsing logic
 pub struct Parser<'input> {
     context: DefaultParsingContext<'input>,
 }
@@ -53,7 +53,7 @@ impl<'input> Parser<'input> {
 
     /// Returns a reference to the parser configuration.
     pub fn config(&self) -> &ParserConfig {
-        self.context.config()
+        self.context.parser_config()
     }
 
     /// Returns a reference to the collected reference definitions.
@@ -79,7 +79,7 @@ impl<'input> Parser<'input> {
     /// - Rich information from tokens (position, type, content)
     /// - Clean separation between lexical and syntactic analysis
     pub fn parse(mut self) -> Result<Document> {
-        crate::parser::cgp_parser::parse_document(&mut self.context)
+        crate::parser::token_pipeline::parse_document(&mut self.context)
     }
 
     /// Handle a parsing warning with the error handler
@@ -101,7 +101,7 @@ impl<'input> Parser<'input> {
 }
 
 // Note: The actual parsing logic is in token_parser.rs (nom combinators)
-// and cgp_parser.rs (CGP interface). This Parser struct is a convenient
+// and token_pipeline.rs (pipeline interface). This Parser struct is a convenient
 // wrapper that provides a simple API for users.
 
 #[cfg(test)]
