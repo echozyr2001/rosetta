@@ -1,10 +1,13 @@
 /// Extension system for custom Markdown syntax and rendering.
+use crate::adapters::DefaultParsingContext;
 use crate::ast::{Block, Inline};
 use crate::codegen::CustomRenderer;
 use crate::error::{MarkdownError, Result};
 use crate::parser::Parser;
 use std::collections::HashMap;
 use std::fmt::Debug;
+
+type ExtensionParser<'a> = Parser<DefaultParsingContext<'a>>;
 
 /// Trait for custom syntax extensions that can parse new Markdown elements.
 pub trait SyntaxExtension: Debug + Send + Sync {
@@ -17,13 +20,13 @@ pub trait SyntaxExtension: Debug + Send + Sync {
     }
 
     /// Attempts to parse a custom block element at the current parser position.
-    fn parse_block(&self, parser: &mut Parser) -> Option<Result<Block>> {
+    fn parse_block(&self, parser: &mut ExtensionParser<'_>) -> Option<Result<Block>> {
         let _ = parser; // Suppress unused parameter warning
         None
     }
 
     /// Attempts to parse a custom inline element at the current parser position.
-    fn parse_inline(&self, parser: &mut Parser) -> Option<Result<Inline>> {
+    fn parse_inline(&self, parser: &mut ExtensionParser<'_>) -> Option<Result<Inline>> {
         let _ = parser; // Suppress unused parameter warning
         None
     }
@@ -120,7 +123,7 @@ impl ExtensionRegistry {
     }
 
     /// Attempts to parse a block using registered extensions
-    pub fn try_parse_block(&self, parser: &mut Parser) -> Option<Result<Block>> {
+    pub fn try_parse_block(&self, parser: &mut ExtensionParser<'_>) -> Option<Result<Block>> {
         // Try extensions in priority order
         for extension in &self.block_extensions {
             if let Some(result) = extension.parse_block(parser) {
@@ -131,7 +134,7 @@ impl ExtensionRegistry {
     }
 
     /// Attempts to parse an inline element using registered extensions
-    pub fn try_parse_inline(&self, parser: &mut Parser) -> Option<Result<Inline>> {
+    pub fn try_parse_inline(&self, parser: &mut ExtensionParser<'_>) -> Option<Result<Inline>> {
         // Try extensions in priority order
         for extension in &self.inline_extensions {
             if let Some(result) = extension.parse_inline(parser) {
@@ -211,7 +214,7 @@ impl ExtensionManager {
     }
 
     /// Attempts to parse a block using registered extensions (if enabled)
-    pub fn try_parse_block(&self, parser: &mut Parser) -> Option<Result<Block>> {
+    pub fn try_parse_block(&self, parser: &mut ExtensionParser<'_>) -> Option<Result<Block>> {
         if self.enabled {
             self.registry.try_parse_block(parser)
         } else {
@@ -220,7 +223,7 @@ impl ExtensionManager {
     }
 
     /// Attempts to parse an inline element using registered extensions (if enabled)
-    pub fn try_parse_inline(&self, parser: &mut Parser) -> Option<Result<Inline>> {
+    pub fn try_parse_inline(&self, parser: &mut ExtensionParser<'_>) -> Option<Result<Inline>> {
         if self.enabled {
             self.registry.try_parse_inline(parser)
         } else {

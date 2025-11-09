@@ -4,7 +4,7 @@ mod core;
 mod token_parser;
 mod utils;
 
-pub mod cgp_parser;
+pub mod token_pipeline;
 
 #[cfg(test)]
 mod tests;
@@ -17,11 +17,11 @@ pub use utils::ParagraphBuilder;
 use crate::ast::Document;
 use crate::error::{ErrorHandler, Result};
 
-/// Parse Markdown using the CGP context-based approach.
+/// Parse Markdown using the component-driven context approach.
 ///
 /// This function creates a `DefaultParsingContext` (including running `Lexer` to generate
 /// all tokens), then uses nom combinators to parse the Token sequence.
-/// This represents the Token-driven parsing paradigm with CGP architecture.
+/// This represents the token-driven parsing paradigm built from swappable components.
 pub fn parse(markdown: &str) -> Result<Document> {
     Parser::with_defaults(markdown).parse()
 }

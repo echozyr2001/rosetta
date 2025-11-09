@@ -1,30 +1,29 @@
 use super::config::ParserConfig;
 use crate::adapters::DefaultParsingContext;
-use crate::ast::Document;
 use crate::error::{ErrorHandler, Result};
 use crate::lexer::Position;
 use crate::traits::*;
 
-/// Parser that uses CGP (Context-Generic Programming) principles.
+/// Parser that uses component-oriented context principles.
 ///
 /// This parser uses a two-phase approach:
 /// 1. Lexer → Token sequence
 /// 2. Parser → AST
 ///
-/// **Benefits of CGP approach**:
+/// **Benefits of this approach**:
 /// - ✅ Better position tracking
 /// - ✅ Reusable lexical analysis
 /// - ✅ Modular and testable via traits
 /// - ✅ Easy to extend and customize
 ///
 /// **Architecture**:
-/// - Uses `DefaultParsingContext` which combines all CGP traits
-/// - Delegates to `cgp_parser` for actual parsing logic
-pub struct Parser<'input> {
-    context: DefaultParsingContext<'input>,
+/// - Uses `DefaultParsingContext` which combines all component traits
+/// - Delegates to `token_pipeline` for actual parsing logic
+pub struct Parser<C> {
+    context: C,
 }
 
-impl<'input> Parser<'input> {
+impl<'input> Parser<DefaultParsingContext<'input>> {
     /// Creates a new parser instance with the given configuration.
     pub fn new(input: &'input str, config: ParserConfig) -> Result<Self> {
         let context = DefaultParsingContext::new(input, config)?;
@@ -45,15 +44,28 @@ impl<'input> Parser<'input> {
         // Note: Custom error handler support can be added to DefaultParsingContext
         Self::new(input, config).expect("Failed to create parser with error handler")
     }
+}
 
+impl<C> Parser<C> {
+    /// Construct a parser from an explicit context.
+    pub fn from_context(context: C) -> Self {
+        Self { context }
+    }
+
+    /// Consume the parser and return the inner context.
+    pub fn into_context(self) -> C {
+        self.context
+    }
+}
+
+impl<'input, C> Parser<C>
+where
+    C: ParsingContext<Token = crate::lexer::token::Token<'input>, Document = crate::ast::Document>
+        + CanAccessParserConfig<Config = ParserConfig>,
+{
     /// Returns the current position in the input.
     pub fn position(&self) -> Position {
         self.context.current_position()
-    }
-
-    /// Returns a reference to the parser configuration.
-    pub fn config(&self) -> &ParserConfig {
-        self.context.config()
     }
 
     /// Returns a reference to the collected reference definitions.
@@ -67,19 +79,14 @@ impl<'input> Parser<'input> {
         &EMPTY_MAP
     }
 
-    /// Parses the input into a `Document` AST.
-    ///
-    /// This method:
-    /// 1. Collects all tokens from the context (Lexer has already tokenized the input)
-    /// 2. Delegates to nom-based `token_parser` to parse the token sequence
-    /// 3. Returns the resulting Document AST
-    ///
-    /// The parsing uses nom combinators on Token sequences, combining:
-    /// - The power of nom's parser combinators
-    /// - Rich information from tokens (position, type, content)
-    /// - Clean separation between lexical and syntactic analysis
-    pub fn parse(mut self) -> Result<Document> {
-        crate::parser::cgp_parser::parse_document(&mut self.context)
+    /// Parses the input into a `Document` AST using the configured context.
+    pub fn parse(mut self) -> Result<C::Document> {
+        crate::parser::token_pipeline::parse_document(&mut self.context)
+    }
+
+    /// Returns a reference to the parser configuration.
+    pub fn config(&self) -> &ParserConfig {
+        self.context.parser_config()
     }
 
     /// Handle a parsing warning with the error handler
@@ -101,7 +108,7 @@ impl<'input> Parser<'input> {
 }
 
 // Note: The actual parsing logic is in token_parser.rs (nom combinators)
-// and cgp_parser.rs (CGP interface). This Parser struct is a convenient
+// and token_pipeline.rs (pipeline interface). This Parser struct is a convenient
 // wrapper that provides a simple API for users.
 
 #[cfg(test)]

@@ -6,33 +6,20 @@ use super::rules::{
     parse_whitespace,
 };
 use super::token::*;
+use std::marker::PhantomData;
 use unicode_segmentation::{GraphemeIndices, UnicodeSegmentation};
 
-/// Nom-powered lexer cursor that produces rich tokens with position tracking.
-///
-/// This struct is the concrete implementation that bridges the pure parsing
-/// rules (in `rules.rs`) with the CGP-friendly token adapters. By keeping the
-/// state machine separate from the token definitions and parsing rules we make
-/// the CGP layering explicit:
-///
-/// ```text
-/// Source ➜ cursor (state machine) ➜ rules (pure nom parsers) ➜ tokens + positions
-/// ```
-///
-/// The cursor owns the input and advances through it using Unicode grapheme
-/// segmentation so that line/column tracking stays correct for multi-byte
-/// characters. Each emitted token is annotated with the starting `Position` so
-/// that downstream CGP contexts can reason about source locations without
-/// depending on this concrete lexer implementation.
+/// Stateless cursor that tracks byte offsets and line/column information.
+/// This is the primitive shared by all lexer rule implementations.
 #[derive(Clone)]
-pub struct Lexer<'input> {
+pub struct Cursor<'input> {
     input: &'input str,
     position: Position,
     graphemes: GraphemeIndices<'input>,
     current_grapheme: Option<(usize, &'input str)>,
 }
 
-impl<'input> Lexer<'input> {
+impl<'input> Cursor<'input> {
     pub fn new(input: &'input str) -> Self {
         let mut graphemes = input.grapheme_indices(true);
         let current_grapheme = graphemes.next();
@@ -45,25 +32,49 @@ impl<'input> Lexer<'input> {
         }
     }
 
-    /// Returns the current tracked position.
     pub fn position(&self) -> Position {
         self.position
     }
 
-    fn byte_position(&self) -> usize {
+    pub fn byte_offset(&self) -> usize {
         self.position.offset
     }
 
-    pub fn peek_token(&self) -> Option<Token<'input>> {
-        let mut temp_lexer = self.clone();
-        temp_lexer.next_token()
+    pub fn rest(&self) -> &'input str {
+        &self.input[self.byte_offset()..]
+    }
+
+    pub fn input(&self) -> &'input str {
+        self.input
     }
 
     pub fn is_at_end(&self) -> bool {
-        self.byte_position() >= self.input.len()
+        self.byte_offset() >= self.input.len()
     }
 
-    fn update_position(&mut self, consumed_bytes: usize) {
+    pub fn is_at_line_start(&self) -> bool {
+        self.position.column == 1
+    }
+
+    pub fn is_at_block_start(&self) -> bool {
+        if self.is_at_line_start() {
+            return true;
+        }
+
+        let mut pos = self.byte_offset();
+        while pos > 0 {
+            pos -= 1;
+            let ch = self.input.as_bytes()[pos] as char;
+            match ch {
+                '\n' | '\r' => return true,
+                ' ' | '\t' => continue,
+                _ => return false,
+            }
+        }
+        true
+    }
+
+    pub fn advance(&mut self, consumed_bytes: usize) {
         let target_offset = self.position.offset + consumed_bytes;
 
         while let Some((offset, grapheme)) = self.current_grapheme {
@@ -83,8 +94,82 @@ impl<'input> Lexer<'input> {
 
         self.position.offset = target_offset;
     }
+}
 
-    fn add_position_to_token(token: Token<'input>, position: Position) -> Token<'input> {
+/// Trait describing a lexing rule set. Implementations receive a mutable cursor
+/// and are responsible for consuming bytes and returning the next token.
+pub trait LexingRule<'input, Tok> {
+    fn next_token(&mut self, cursor: &mut Cursor<'input>) -> Option<Tok>;
+}
+
+/// Generic lexer driver that accepts an input string and a rule implementation.
+pub struct Lexer<'input, Tok, Rule>
+where
+    Rule: LexingRule<'input, Tok>,
+{
+    cursor: Cursor<'input>,
+    rules: Rule,
+    token: PhantomData<Tok>,
+}
+
+impl<'input, Tok, Rule> Lexer<'input, Tok, Rule>
+where
+    Rule: LexingRule<'input, Tok>,
+{
+    pub fn with_rules(input: &'input str, rules: Rule) -> Self {
+        Self {
+            cursor: Cursor::new(input),
+            rules,
+            token: PhantomData,
+        }
+    }
+
+    pub fn position(&self) -> Position {
+        self.cursor.position()
+    }
+
+    pub fn is_at_end(&self) -> bool {
+        self.cursor.is_at_end()
+    }
+
+    pub fn next_token(&mut self) -> Option<Tok> {
+        self.rules.next_token(&mut self.cursor)
+    }
+}
+
+impl<'input, Tok, Rule> Lexer<'input, Tok, Rule>
+where
+    Rule: LexingRule<'input, Tok> + Clone,
+{
+    pub fn peek_token(&self) -> Option<Tok> {
+        let mut clone = Lexer {
+            cursor: self.cursor.clone(),
+            rules: self.rules.clone(),
+            token: PhantomData,
+        };
+        clone.next_token()
+    }
+}
+
+impl<'input, Tok, Rule> Clone for Lexer<'input, Tok, Rule>
+where
+    Rule: LexingRule<'input, Tok> + Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            cursor: self.cursor.clone(),
+            rules: self.rules.clone(),
+            token: PhantomData,
+        }
+    }
+}
+
+/// Markdown-specific rule set that composes the existing parsing functions.
+#[derive(Clone, Default)]
+pub struct MarkdownRules;
+
+impl MarkdownRules {
+    fn add_position(token: Token<'_>, position: Position) -> Token<'_> {
         match token {
             Token::AtxHeading(mut t) => {
                 t.position = position;
@@ -180,156 +265,137 @@ impl<'input> Lexer<'input> {
             Token::LinkLabelDelimiter(_) | Token::Eof => token,
         }
     }
+}
 
-    pub fn next_token(&mut self) -> Option<Token<'input>> {
-        if self.byte_position() >= self.input.len() {
+impl<'input> LexingRule<'input, Token<'input>> for MarkdownRules {
+    fn next_token(&mut self, cursor: &mut Cursor<'input>) -> Option<Token<'input>> {
+        if cursor.is_at_end() {
             return Some(Token::Eof);
         }
 
-        let current = &self.input[self.byte_position()..];
-        let start_position = self.position;
+        let current = cursor.rest();
+        let start_position = cursor.position();
 
         if let Ok((remaining, token)) = parse_newline(current) {
             let consumed = current.len() - remaining.len();
-            self.update_position(consumed);
-            return Some(Self::add_position_to_token(token, start_position));
+            cursor.advance(consumed);
+            return Some(Self::add_position(token, start_position));
         }
 
-        if self.is_at_line_start()
+        if cursor.is_at_line_start()
             && let Ok((remaining, token)) = parse_indent(current)
         {
             let consumed = current.len() - remaining.len();
-            self.update_position(consumed);
-            return Some(Self::add_position_to_token(token, start_position));
+            cursor.advance(consumed);
+            return Some(Self::add_position(token, start_position));
         }
 
-        if self.is_at_block_start() {
+        if cursor.is_at_block_start() {
             if let Ok((remaining, token)) = parse_list_marker(current) {
                 let consumed = current.len() - remaining.len();
-                self.update_position(consumed);
-                return Some(Self::add_position_to_token(token, start_position));
+                cursor.advance(consumed);
+                return Some(Self::add_position(token, start_position));
             }
 
             if let Ok((remaining, token)) = parse_atx_heading(current) {
                 let consumed = current.len() - remaining.len();
-                self.update_position(consumed);
-                return Some(Self::add_position_to_token(token, start_position));
+                cursor.advance(consumed);
+                return Some(Self::add_position(token, start_position));
             }
 
             if let Ok((remaining, token)) = parse_code_fence(current) {
                 let consumed = current.len() - remaining.len();
-                self.update_position(consumed);
-                return Some(Self::add_position_to_token(token, start_position));
+                cursor.advance(consumed);
+                return Some(Self::add_position(token, start_position));
             }
 
             if let Ok((remaining, token)) = parse_blockquote(current) {
                 let consumed = current.len() - remaining.len();
-                self.update_position(consumed);
-                return Some(Self::add_position_to_token(token, start_position));
+                cursor.advance(consumed);
+                return Some(Self::add_position(token, start_position));
             }
 
             if let Ok((remaining, token)) = parse_thematic_break(current) {
                 let consumed = current.len() - remaining.len();
-                self.update_position(consumed);
-                return Some(Self::add_position_to_token(token, start_position));
+                cursor.advance(consumed);
+                return Some(Self::add_position(token, start_position));
             }
 
             if let Ok((remaining, token)) = parse_setext_heading(current) {
                 let consumed = current.len() - remaining.len();
-                self.update_position(consumed);
-                return Some(Self::add_position_to_token(token, start_position));
+                cursor.advance(consumed);
+                return Some(Self::add_position(token, start_position));
             }
         }
 
         if let Ok((remaining, token)) = parse_escape_sequence(current) {
             let consumed = current.len() - remaining.len();
-            self.update_position(consumed);
-            return Some(Self::add_position_to_token(token, start_position));
+            cursor.advance(consumed);
+            return Some(Self::add_position(token, start_position));
         }
 
         if let Ok((remaining, token)) = parse_code_span(current) {
             let consumed = current.len() - remaining.len();
-            self.update_position(consumed);
-            return Some(Self::add_position_to_token(token, start_position));
+            cursor.advance(consumed);
+            return Some(Self::add_position(token, start_position));
         }
 
         if let Ok((remaining, token)) = parse_autolink(current) {
             let consumed = current.len() - remaining.len();
-            self.update_position(consumed);
-            return Some(Self::add_position_to_token(token, start_position));
+            cursor.advance(consumed);
+            return Some(Self::add_position(token, start_position));
         }
 
         if let Ok((remaining, token)) = parse_entity(current) {
             let consumed = current.len() - remaining.len();
-            self.update_position(consumed);
-            return Some(Self::add_position_to_token(token, start_position));
+            cursor.advance(consumed);
+            return Some(Self::add_position(token, start_position));
         }
 
         if let Ok((remaining, token)) = parse_html_inline(current) {
             let consumed = current.len() - remaining.len();
-            self.update_position(consumed);
-            return Some(Self::add_position_to_token(token, start_position));
+            cursor.advance(consumed);
+            return Some(Self::add_position(token, start_position));
         }
 
         if let Ok((remaining, token)) = parse_emphasis_delimiter(current) {
             let consumed = current.len() - remaining.len();
-            self.update_position(consumed);
-            return Some(Self::add_position_to_token(token, start_position));
+            cursor.advance(consumed);
+            return Some(Self::add_position(token, start_position));
         }
 
         if let Ok((remaining, token)) = parse_whitespace(current) {
             let consumed = current.len() - remaining.len();
-            self.update_position(consumed);
-            return Some(Self::add_position_to_token(token, start_position));
+            cursor.advance(consumed);
+            return Some(Self::add_position(token, start_position));
         }
 
         if let Ok((remaining, token)) = parse_text(current) {
             let consumed = current.len() - remaining.len();
-            self.update_position(consumed);
-            return Some(Self::add_position_to_token(token, start_position));
+            cursor.advance(consumed);
+            return Some(Self::add_position(token, start_position));
         }
 
-        let old_pos = self.byte_position();
-        self.update_position(1);
+        let old_offset = cursor.byte_offset();
+        cursor.advance(1);
         Some(Token::Text(TextToken {
-            lexeme: &self.input[old_pos..old_pos + 1],
+            lexeme: &cursor.input()[old_offset..old_offset + 1],
             position: start_position,
         }))
     }
+}
 
-    fn is_at_line_start(&self) -> bool {
-        self.position.column == 1
-    }
-
-    fn is_at_block_start(&self) -> bool {
-        if self.is_at_line_start() {
-            return true;
-        }
-
-        let mut pos = self.byte_position();
-        while pos > 0 {
-            pos -= 1;
-            let ch = self.input.as_bytes()[pos] as char;
-            match ch {
-                '\n' | '\r' => return true,
-                ' ' | '\t' => continue,
-                _ => return false,
-            }
-        }
-        true
+impl<'input> Lexer<'input, Token<'input>, MarkdownRules> {
+    pub fn new(input: &'input str) -> Self {
+        Lexer::with_rules(input, MarkdownRules)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lexer::token::{
-        AtxHeadingToken, AutolinkKind, AutolinkToken, CodeSpanToken, EmphasisDelimiterToken,
-        EntityToken, EscapeSequenceToken, IndentToken, LineEndingKind, LineEndingToken, ListKind,
-        ListMarkerToken, SetextHeadingToken, TextToken,
-    };
 
-    fn collect_tokens<'a>(lexer: &mut Lexer<'a>) -> Vec<Token<'a>> {
+    fn collect_tokens<'a>(lexer: &mut Lexer<'a, Token<'a>, MarkdownRules>) -> Vec<Token<'a>> {
         let mut tokens = Vec::new();
         while let Some(token) = lexer.next_token() {
             let end = matches!(token, Token::Eof);
