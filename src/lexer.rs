@@ -14,7 +14,9 @@ pub mod token;
 mod cursor;
 mod position;
 mod rules;
-mod token_type;
+mod traits;
 
-pub use cursor::Lexer;
+pub use cursor::{Cursor, Lexer as GenericLexer, LexingRule, MarkdownRules};
+pub type Lexer<'input> = cursor::Lexer<'input, token::Token<'input>, MarkdownRules>;
 pub use position::Position;
+pub use traits::LexToken;

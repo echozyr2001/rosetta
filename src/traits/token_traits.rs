@@ -3,7 +3,7 @@
 /// This module defines provider and consumer traits that decouple the lexer,
 /// parser, and token implementations using component abstractions.
 use crate::error::Result;
-use crate::lexer::Position;
+use crate::lexer::{LexToken, Position};
 
 use super::component::{DelegateComponent, HasProvider, IsProviderFor};
 
@@ -12,7 +12,7 @@ pub struct TokenProviderComponent;
 
 /// Consumer trait for contexts capable of supplying tokens.
 pub trait CanProvideTokens: HasProvider {
-    type Token: TokenType;
+    type Token: LexToken;
 
     fn current_token(&self) -> Option<&Self::Token>;
     fn next_token(&mut self) -> Result<Self::Token>;
@@ -22,7 +22,7 @@ pub trait CanProvideTokens: HasProvider {
 
 /// Provider trait that concrete component registries implement.
 pub trait TokenProvider<Context>: IsProviderFor<TokenProviderComponent, Context> {
-    type Token: TokenType;
+    type Token: LexToken;
 
     #[allow(clippy::needless_lifetimes)]
     fn current_token<'a>(context: &'a Context) -> Option<&'a Self::Token>;
@@ -80,24 +80,4 @@ where
     fn current_position(context: &Context) -> Position {
         <Component::Delegate as TokenProvider<Context>>::current_position(context)
     }
-}
-
-/// Trait representing a token in the parsing pipeline.
-/// This is a marker trait that allows different token implementations
-/// to be used interchangeably through trait objects or generics.
-pub trait TokenType: Clone + std::fmt::Debug {
-    /// Returns the position of this token in the source
-    fn position(&self) -> Option<Position>;
-
-    /// Returns true if this token represents end-of-file
-    fn is_eof(&self) -> bool;
-
-    /// Returns true if this token represents a newline
-    fn is_newline(&self) -> bool;
-
-    /// Returns true if this token represents whitespace
-    fn is_whitespace(&self) -> bool;
-
-    /// Returns true if this token represents indentation
-    fn is_indent(&self) -> bool;
 }

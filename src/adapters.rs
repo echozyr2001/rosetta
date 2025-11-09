@@ -4,7 +4,7 @@
 /// to make them compatible with the component trait system.
 use crate::ast::{Block, Document, Inline};
 use crate::error::{ErrorHandler, Result};
-use crate::lexer::{Lexer, Position, token::Token};
+use crate::lexer::{LexToken, Lexer, Position, token::Token};
 use crate::parser::ParserConfig;
 use crate::traits::*;
 /// Adapter that makes the existing Lexer compatible with the token

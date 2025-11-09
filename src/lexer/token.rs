@@ -1,4 +1,6 @@
 #![allow(dead_code)]
+use crate::lexer::{LexToken, Position};
+
 /// Experimental token model that captures the richer lexical information
 /// described by the CommonMark 0.31.2 specification. This design keeps the
 /// lexical layer focused on syntactic markers and defers block aggregation to
@@ -314,4 +316,55 @@ pub struct IndentToken {
 pub struct PunctuationToken {
     pub ch: char,
     pub position: crate::lexer::Position,
+}
+
+// Implement LexToken for Token from token.rs
+impl<'input> LexToken for Token<'input> {
+    fn position(&self) -> Option<Position> {
+        match self {
+            Token::AtxHeading(token) => Some(token.position),
+            Token::SetextHeading(token) => Some(token.position),
+            Token::CodeBlock(token) => Some(token.position),
+            Token::BlockQuote(token) => Some(token.position),
+            Token::ListMarker(token) => Some(token.position),
+            Token::ThematicBreak(token) => Some(token.position),
+            Token::HtmlBlock(token) => Some(token.position),
+            Token::LinkReferenceDefinition(token) => Some(token.position),
+            Token::Text(token) => Some(token.position),
+            Token::Whitespace(token) => Some(token.position),
+            Token::SoftBreak(token) => Some(token.position),
+            Token::HardBreak(token) => Some(token.position),
+            Token::EmphasisDelimiter(token) => Some(token.position),
+            Token::CodeSpan(token) => Some(token.position),
+            Token::CodeSpanDelimiter(token) => Some(token.position),
+            Token::Autolink(token) => Some(token.position),
+            Token::Entity(token) => Some(token.position),
+            Token::EscapeSequence(token) => Some(token.position),
+            Token::HtmlInline(token) => Some(token.position),
+            Token::LinkDestination(token) => Some(token.position),
+            Token::LinkTitle(token) => Some(token.position),
+            Token::ImageMarker(token) => Some(token.position),
+            Token::LineEnding(token) => Some(token.position),
+            Token::Indent(token) => Some(token.position),
+            Token::Punctuation(token) => Some(token.position),
+            Token::LinkLabelDelimiter(_) => None, // LinkLabelDelimiter doesn't have position yet
+            Token::Eof => None,
+        }
+    }
+
+    fn is_eof(&self) -> bool {
+        matches!(self, Token::Eof)
+    }
+
+    fn is_newline(&self) -> bool {
+        matches!(self, Token::LineEnding(_))
+    }
+
+    fn is_whitespace(&self) -> bool {
+        matches!(self, Token::Whitespace(_))
+    }
+
+    fn is_indent(&self) -> bool {
+        matches!(self, Token::Indent(_))
+    }
 }

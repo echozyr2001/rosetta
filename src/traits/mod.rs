@@ -12,7 +12,7 @@ pub mod token_traits;
 pub use component::{DelegateComponent, HasProvider, IsProviderFor};
 
 // Re-export token layer traits
-pub use token_traits::{CanProvideTokens, TokenProvider, TokenProviderComponent, TokenType};
+pub use token_traits::{CanProvideTokens, TokenProvider, TokenProviderComponent};
 
 // Re-export AST layer traits
 pub use ast_traits::{
