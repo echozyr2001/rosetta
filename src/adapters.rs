@@ -7,8 +7,6 @@ use crate::error::{ErrorHandler, Result};
 use crate::lexer::{Lexer, Position, token::Token};
 use crate::parser::ParserConfig;
 use crate::traits::*;
-use std::marker::PhantomData;
-
 /// Adapter that makes the existing Lexer compatible with the token
 /// provider component.
 pub struct LexerAdapter<'input> {
@@ -432,50 +430,6 @@ impl DocumentNode for Document {
 
     fn blocks(&self) -> &[Self::Block] {
         &self.blocks
-    }
-}
-
-/// Type alias for a parser that works with default context
-pub type DefaultParser<'input> = GenericParser<DefaultParsingContext<'input>>;
-
-/// Placeholder for a generic parser (to be implemented)
-pub struct GenericParser<C: ParsingContext> {
-    context: C,
-    _phantom: PhantomData<C>,
-}
-
-impl<C: ParsingContext> GenericParser<C> {
-    pub fn new(context: C) -> Self {
-        Self {
-            context,
-            _phantom: PhantomData,
-        }
-    }
-
-    pub fn parse(&mut self) -> Result<C::Document> {
-        let blocks = Vec::new();
-
-        while !self.context.is_at_end() {
-            // Skip whitespace and newlines
-            if let Some(token) = self.context.current_token()
-                && (token.is_newline() || token.is_whitespace())
-            {
-                self.context.advance()?;
-                continue;
-            }
-
-            // Parse a block (simplified example)
-            // In a real implementation, this would use TokenInspector
-            // and TokenDataExtractor traits
-            if self.context.is_at_end() {
-                break;
-            }
-
-            // Placeholder: would call parse_block here
-            self.context.advance()?;
-        }
-
-        Ok(self.context.ast_builder().build_document(blocks))
     }
 }
 
