@@ -65,7 +65,7 @@ fn parses_blockquotes() {
     let parser = Parser::with_defaults(input);
     let doc = parser.parse().expect("should parse blockquote");
 
-    // Note: Current token_parser implementation may parse each blockquote line as separate block
+    // Note: Current parser rules may parse each blockquote line as separate block
     // This is a known limitation that will be improved in future versions
     assert!(!doc.blocks.is_empty(), "should have at least one block");
 
@@ -83,7 +83,7 @@ fn parses_bullet_lists() {
     let parser = Parser::with_defaults(input);
     let doc = parser.parse().expect("should parse bullet list");
 
-    // Note: Current token_parser implementation may parse each list item as separate block
+    // Note: Current parser rules may parse each list item as separate block
     // This is a known limitation that will be improved in future versions
     assert!(!doc.blocks.is_empty(), "should have at least one block");
 
@@ -98,7 +98,7 @@ fn parses_ordered_lists() {
     let parser = Parser::with_defaults(input);
     let doc = parser.parse().expect("should parse ordered list");
 
-    // Note: Current token_parser implementation may parse each list item as separate block
+    // Note: Current parser rules may parse each list item as separate block
     // This is a known limitation that will be improved in future versions
     assert!(!doc.blocks.is_empty(), "should have at least one block");
 

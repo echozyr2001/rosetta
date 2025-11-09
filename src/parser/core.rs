@@ -107,10 +107,6 @@ where
     }
 }
 
-// Note: The actual parsing logic is in token_parser.rs (nom combinators)
-// and token_pipeline.rs (pipeline interface). This Parser struct is a convenient
-// wrapper that provides a simple API for users.
-
 #[cfg(test)]
 mod tests {
     use super::*;
