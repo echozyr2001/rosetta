@@ -1,7 +1,9 @@
 // Parser module with submodules for better organization using Rust 2018 module system
 mod config;
 mod core;
-mod token_parser;
+pub mod rules;
+mod state;
+pub mod traits;
 mod utils;
 
 pub mod token_pipeline;

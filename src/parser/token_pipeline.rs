@@ -29,7 +29,7 @@
 ///        │
 ///        ▼
 ///   ┌──────────────────┐
-///   │  token_parser    │  ← nom combinators parse Tokens
+///   │  parser::rules   │  ← nom combinators parse Tokens
 ///   │  (nom-based)     │
 ///   └──────────────────┘
 ///        │
@@ -49,7 +49,7 @@
 ///
 /// This design follows the principle of "separation of concerns":
 /// - **Lexer** (in `lexer.rs`): Handles tokenization
-/// - **token_parser** (in `token_parser.rs`): Implements nom combinators for Token sequences
+/// - **rules** (in `parser::rules`): Implements nom combinators for Token sequences
 /// - **token_pipeline** (this file): Orchestrates the component-based parsing
 ///
 /// # Example
@@ -63,12 +63,61 @@
 /// let document = token_pipeline::parse(&mut context)?;
 /// ```
 use crate::error::Result;
+use crate::lexer::LexToken;
+use crate::parser::rules::MarkdownParseRule;
+use crate::parser::state::ParserState;
+use crate::parser::traits::{DocumentNode, ParseRule};
 use crate::traits::*;
+use std::marker::PhantomData;
+
+/// Generic parser driver that consumes a slice of tokens using a configurable rule set.
+pub struct ParserDriver<Tok, Document, Rule>
+where
+    Tok: LexToken,
+    Document: DocumentNode,
+    Rule: ParseRule<Tok, Document>,
+{
+    rule: Rule,
+    _marker: PhantomData<(Tok, Document)>,
+}
+
+impl<Tok, Document, Rule> ParserDriver<Tok, Document, Rule>
+where
+    Tok: LexToken,
+    Document: DocumentNode,
+    Rule: ParseRule<Tok, Document>,
+{
+    pub fn new(rule: Rule) -> Self {
+        Self {
+            rule,
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn parse(&mut self, tokens: Vec<Tok>) -> Result<Document> {
+        let mut state = ParserState::new(tokens);
+        self.rule.parse(&mut state)
+    }
+}
+
+impl<Tok, Document, Rule> Clone for ParserDriver<Tok, Document, Rule>
+where
+    Tok: LexToken,
+    Document: DocumentNode,
+    Rule: ParseRule<Tok, Document> + Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            rule: self.rule.clone(),
+            _marker: PhantomData,
+        }
+    }
+}
 
 /// Parse a document using any context that implements the token pipeline traits.
 ///
 /// This function collects all tokens from the context and uses nom-based
-/// `token_parser` to produce a Document AST.
+/// rule sets to produce a Document AST.
 ///
 /// **Type Constraints**: Requires the context to use concrete `Token` and `Document`
 /// types because the underlying nom-based parser works with these specific types.
@@ -76,14 +125,14 @@ pub fn parse<'input, C>(context: &mut C) -> Result<C::Document>
 where
     C: ParsingContext<Token = crate::lexer::token::Token<'input>, Document = crate::ast::Document>,
 {
-    parse_document(context)
+    parse_document_with_rule(context, MarkdownParseRule::default())
 }
 
 /// Parse a complete document from a compatible context.
 ///
 /// **Implementation Strategy**:
 /// 1. Collect all tokens from the context
-/// 2. Use nom-based token_parser to parse the token sequence
+/// 2. Use nom-based rule sets to parse the token sequence
 /// 3. Return the parsed Document
 ///
 /// This approach combines:
@@ -92,14 +141,17 @@ where
 /// - Token-based parsing (better position tracking)
 ///
 /// **Type Constraints**: Currently requires concrete `Token` and `Document` types because
-/// token_parser is implemented with nom combinators that work on specific token types.
+/// rule modules are implemented with nom combinators that work on specific token types.
 /// This is a reasonable trade-off that gives us:
 /// - The power of nom's parser combinators
 /// - Type safety and performance
 /// - Still allows swapping context implementations (as long as they use the same token types)
-pub fn parse_document<'input, C>(context: &mut C) -> Result<C::Document>
+pub fn parse_document_with_rule<C, Rule>(context: &mut C, rule: Rule) -> Result<C::Document>
 where
-    C: ParsingContext<Token = crate::lexer::token::Token<'input>, Document = crate::ast::Document>,
+    C: ParsingContext,
+    C::Token: LexToken,
+    C::Document: DocumentNode,
+    Rule: ParseRule<C::Token, C::Document>,
 {
     // Collect all tokens from the context
     let mut tokens = Vec::new();
@@ -111,9 +163,15 @@ where
         context.advance()?;
     }
 
-    // Use nom-based token_parser to parse the token sequence
-    // This is where the actual parsing happens using nom combinators
-    crate::parser::token_parser::parse_tokens(&tokens)
+    let mut driver = ParserDriver::new(rule);
+    driver.parse(tokens)
+}
+
+pub fn parse_document<'input, C>(context: &mut C) -> Result<C::Document>
+where
+    C: ParsingContext<Token = crate::lexer::token::Token<'input>, Document = crate::ast::Document>,
+{
+    parse_document_with_rule(context, MarkdownParseRule::default())
 }
 
 #[cfg(test)]
