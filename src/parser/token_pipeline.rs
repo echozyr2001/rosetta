@@ -68,50 +68,32 @@ use crate::parser::rules::MarkdownParseRule;
 use crate::parser::state::ParserState;
 use crate::parser::traits::{AstNode, ParseRule};
 use crate::traits::*;
-use std::marker::PhantomData;
 
-/// Generic parser driver that consumes a slice of tokens using a configurable rule set.
-pub struct ParserDriver<Tok, Document, Rule>
+fn collect_tokens<C>(context: &mut C) -> Result<Vec<C::Token>>
+where
+    C: ParsingContext,
+    C::Token: LexToken,
+{
+    let mut tokens = Vec::new();
+
+    while !context.is_at_end() {
+        if let Some(token) = context.current_token() {
+            tokens.push(token.clone());
+        }
+        context.advance()?;
+    }
+
+    Ok(tokens)
+}
+
+fn parse_tokens<Tok, Document, Rule>(tokens: Vec<Tok>, mut rule: Rule) -> Result<Document>
 where
     Tok: LexToken,
     Document: AstNode,
     Rule: ParseRule<Tok, Document>,
 {
-    rule: Rule,
-    _marker: PhantomData<(Tok, Document)>,
-}
-
-impl<Tok, Document, Rule> ParserDriver<Tok, Document, Rule>
-where
-    Tok: LexToken,
-    Document: AstNode,
-    Rule: ParseRule<Tok, Document>,
-{
-    pub fn new(rule: Rule) -> Self {
-        Self {
-            rule,
-            _marker: PhantomData,
-        }
-    }
-
-    pub fn parse(&mut self, tokens: Vec<Tok>) -> Result<Document> {
-        let mut state = ParserState::new(tokens);
-        self.rule.parse(&mut state)
-    }
-}
-
-impl<Tok, Document, Rule> Clone for ParserDriver<Tok, Document, Rule>
-where
-    Tok: LexToken,
-    Document: AstNode,
-    Rule: ParseRule<Tok, Document> + Clone,
-{
-    fn clone(&self) -> Self {
-        Self {
-            rule: self.rule.clone(),
-            _marker: PhantomData,
-        }
-    }
+    let mut state = ParserState::new(&tokens);
+    rule.parse(&mut state)
 }
 
 /// Parse a document using any context that implements the token pipeline traits.
@@ -156,18 +138,8 @@ where
     C::Document: AstNode,
     Rule: ParseRule<C::Token, C::Document>,
 {
-    // Collect all tokens from the context
-    let mut tokens = Vec::new();
-
-    while !context.is_at_end() {
-        if let Some(token) = context.current_token() {
-            tokens.push(token.clone());
-        }
-        context.advance()?;
-    }
-
-    let mut driver = ParserDriver::new(rule);
-    driver.parse(tokens)
+    let tokens = collect_tokens(context)?;
+    parse_tokens(tokens, rule)
 }
 
 pub fn parse_document<'input, C>(context: &mut C) -> Result<C::Document>

@@ -108,5 +108,5 @@ where
     Tok: crate::lexer::LexToken,
     Document: AstNode,
 {
-    fn parse(&mut self, state: &mut ParserState<Tok>) -> Result<Document>;
+    fn parse(&mut self, state: &mut ParserState<'_, Tok>) -> Result<Document>;
 }

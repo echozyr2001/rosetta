@@ -1,24 +1,24 @@
 use crate::lexer::LexToken;
 
-/// ParserState keeps track of the collected token stream and the current cursor.
-pub struct ParserState<Tok>
+/// ParserState keeps track of the remaining token slice and the current cursor.
+pub struct ParserState<'a, Tok>
 where
     Tok: LexToken,
 {
-    tokens: Vec<Tok>,
+    tokens: &'a [Tok],
     offset: usize,
 }
 
-impl<Tok> ParserState<Tok>
+impl<'a, Tok> ParserState<'a, Tok>
 where
     Tok: LexToken,
 {
-    pub fn new(tokens: Vec<Tok>) -> Self {
+    pub fn new(tokens: &'a [Tok]) -> Self {
         Self { tokens, offset: 0 }
     }
 
     /// Returns the slice of tokens yet to be consumed.
-    pub fn remaining(&self) -> &[Tok] {
+    pub fn remaining(&self) -> &'a [Tok] {
         &self.tokens[self.offset..]
     }
 
@@ -31,12 +31,7 @@ where
     pub fn is_exhausted(&self) -> bool {
         self.offset >= self.tokens.len()
     }
-}
 
-impl<Tok> ParserState<Tok>
-where
-    Tok: LexToken,
-{
     /// Consumes all remaining tokens.
     pub fn finish(&mut self) {
         self.offset = self.tokens.len();
