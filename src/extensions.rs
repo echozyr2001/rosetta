@@ -1,9 +1,9 @@
 /// Extension system for custom Markdown syntax and rendering.
 use crate::adapters::DefaultParsingContext;
-use crate::ast::{Block, Inline};
 use crate::codegen::CustomRenderer;
 use crate::error::{MarkdownError, Result};
 use crate::parser::Parser;
+use crate::parser::ast::{Block, Inline};
 use std::collections::HashMap;
 use std::fmt::Debug;
 

@@ -1,4 +1,5 @@
 // Parser module with submodules for better organization using Rust 2018 module system
+pub mod ast;
 mod config;
 mod core;
 pub mod rules;
@@ -16,8 +17,8 @@ pub use config::ParserConfig;
 pub use core::Parser;
 pub use utils::ParagraphBuilder;
 
-use crate::ast::Document;
 use crate::error::{ErrorHandler, Result};
+use crate::parser::ast::Document;
 
 /// Parse Markdown using the component-driven context approach.
 ///

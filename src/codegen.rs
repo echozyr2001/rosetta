@@ -1,6 +1,6 @@
-use crate::ast::Document;
 use crate::dom::DomNode;
 use crate::error::{MarkdownError, Result};
+use crate::parser::ast::Document;
 use std::collections::HashMap;
 
 /// Configuration options for HTML output formatting
@@ -1302,7 +1302,7 @@ mod commonmark_compliance_tests {
 
     #[test]
     fn test_ast_to_html_generation() {
-        use crate::ast::utils::NodeBuilder;
+        use crate::parser::ast::utils::NodeBuilder;
 
         // Create a simple AST document using NodeBuilder
         let heading_text = NodeBuilder::text("Test Heading".to_string());

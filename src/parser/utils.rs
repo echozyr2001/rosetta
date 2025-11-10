@@ -1,4 +1,4 @@
-use crate::ast::{Block, Inline};
+use crate::parser::ast::{Block, Inline};
 
 /// Enhanced paragraph builder that handles complex inline content.
 pub struct ParagraphBuilder {

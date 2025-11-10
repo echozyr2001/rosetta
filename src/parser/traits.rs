@@ -1,30 +1,20 @@
 use crate::error::Result;
 use crate::lexer::Position;
 
-/// Trait representing an inline node within the parser.
-/// Concrete inline types implement this so the parser can stay generic.
-pub trait InlineNode: Clone + std::fmt::Debug {
+/// Unified AST node abstraction used by the parser.
+///
+/// All concrete AST nodes (documents, blocks, and inlines) implement this trait,
+/// keeping the parser generic over specific node implementations.
+pub trait AstNode: Clone + std::fmt::Debug {
     fn position(&self) -> Option<Position>;
-}
-
-/// Trait representing a block-level node within the parser.
-pub trait BlockNode: Clone + std::fmt::Debug {
-    fn position(&self) -> Option<Position>;
-}
-
-/// Trait representing the root document node within the parser.
-pub trait DocumentNode: Clone + std::fmt::Debug {
-    type Block: BlockNode;
-
-    fn blocks(&self) -> &[Self::Block];
 }
 
 /// AST builder abstraction used by the parser to construct nodes
 /// without depending on concrete implementations.
 pub trait AstBuilder {
-    type Inline: InlineNode;
-    type Block: BlockNode;
-    type Document: DocumentNode<Block = Self::Block>;
+    type Inline: AstNode;
+    type Block: AstNode;
+    type Document: AstNode;
 
     // Document builders
     fn build_document(&self, blocks: Vec<Self::Block>) -> Self::Document;
@@ -116,7 +106,7 @@ use super::state::ParserState;
 pub trait ParseRule<Tok, Document>
 where
     Tok: crate::lexer::LexToken,
-    Document: DocumentNode,
+    Document: AstNode,
 {
     fn parse(&mut self, state: &mut ParserState<Tok>) -> Result<Document>;
 }

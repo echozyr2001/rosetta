@@ -4,18 +4,16 @@ use super::component::{DelegateComponent, HasProvider, IsProviderFor};
 /// This module defines builder and visitor traits that decouple the parser
 /// from specific AST implementations while using component abstractions.
 use crate::error::Result;
-pub use crate::parser::traits::{
-    AstBuilder, BlockNode, DocumentNode, InlineNode, ListItem, ListKind,
-};
+pub use crate::parser::traits::{AstBuilder, AstNode, ListItem, ListKind};
 
 /// Component marker for AST construction.
 pub struct AstBuilderComponent;
 
 /// Consumer trait for contexts capable of building AST nodes.
 pub trait CanBuildAst: HasProvider {
-    type Inline: InlineNode;
-    type Block: BlockNode;
-    type Document: DocumentNode<Block = Self::Block>;
+    type Inline: AstNode;
+    type Block: AstNode;
+    type Document: AstNode;
 
     fn ast_builder(
         &self,
@@ -25,9 +23,9 @@ pub trait CanBuildAst: HasProvider {
 /// Provider trait implemented by component registries that offer AST building
 /// capabilities.
 pub trait AstBuilderProvider<Context>: IsProviderFor<AstBuilderComponent, Context> {
-    type Inline: InlineNode;
-    type Block: BlockNode;
-    type Document: DocumentNode<Block = Self::Block>;
+    type Inline: AstNode;
+    type Block: AstNode;
+    type Document: AstNode;
 
     #[allow(clippy::needless_lifetimes)]
     fn ast_builder<'a>(

@@ -1,6 +1,6 @@
-use crate::ast::{Document, SourceMap};
 use crate::error::MarkdownError;
 use crate::lexer::{Position, token::Token};
+use crate::parser::ast::{Document, SourceMap};
 use crate::parser::rules::block_patterns::skip_ws_nl;
 use crate::parser::rules::block_rules::MarkdownBlockRules;
 use crate::parser::rules::input::TokenSlice;

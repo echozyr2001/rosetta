@@ -1,4 +1,4 @@
-use crate::ast::Block;
+use crate::parser::ast::Block;
 use crate::parser::rules::block_patterns::{
     parse_atx_heading_block, parse_blockquote_block, parse_code_block_block, parse_list_block,
     parse_paragraph_block, parse_setext_heading_block, parse_thematic_break_block,

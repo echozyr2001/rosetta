@@ -1,11 +1,11 @@
+use crate::codegen::OutputConfig;
+use crate::dom::DomNode;
+use crate::error::{MarkdownError, Result};
 /// Configuration module for the Markdown engine public API.
 ///
 /// This module provides configuration structs and the main MarkdownEngine
 /// with builder pattern for easy configuration and usage.
-use crate::ast::Document;
-use crate::codegen::OutputConfig;
-use crate::dom::DomNode;
-use crate::error::{MarkdownError, Result};
+use crate::parser::ast::Document;
 // use crate::extensions::ExtensionManager;
 use crate::parser::ParserConfig;
 use crate::performance::{ParallelConfig, PerformanceOptimizer};
@@ -650,7 +650,7 @@ mod tests {
         assert_eq!(document.blocks.len(), 1);
         assert!(matches!(
             document.blocks[0],
-            crate::ast::Block::Heading { .. }
+            crate::parser::ast::Block::Heading { .. }
         ));
     }
 
