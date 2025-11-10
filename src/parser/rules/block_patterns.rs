@@ -1,5 +1,5 @@
-use crate::ast::{Block, Inline, ListItem, ListKind};
 use crate::lexer::token::Token;
+use crate::parser::ast::{Block, Inline, ListItem, ListKind};
 use crate::parser::rules::input::TokenSlice;
 use nom::{IResult, combinator::map};
 

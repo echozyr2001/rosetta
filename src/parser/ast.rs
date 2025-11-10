@@ -1,9 +1,10 @@
 use crate::lexer::Position;
+use crate::parser::traits::AstNode;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// Base trait for all AST nodes providing basic node functionality
-pub trait Node {
+/// Base trait for all AST nodes providing visitor support functionality
+pub trait VisitNode {
     /// Get source position if available
     fn source_position(&self) -> Option<Position>;
 
@@ -38,6 +39,12 @@ pub trait MutVisitor {
 pub struct Document {
     pub blocks: Vec<Block>,
     pub source_map: SourceMap,
+}
+
+impl AstNode for Document {
+    fn position(&self) -> Option<Position> {
+        None
+    }
 }
 
 /// Block-level elements as defined by CommonMark specification
@@ -83,6 +90,20 @@ pub enum Block {
     },
 }
 
+impl AstNode for Block {
+    fn position(&self) -> Option<Position> {
+        match self {
+            Block::Heading { position, .. }
+            | Block::Paragraph { position, .. }
+            | Block::CodeBlock { position, .. }
+            | Block::BlockQuote { position, .. }
+            | Block::List { position, .. }
+            | Block::ThematicBreak { position, .. }
+            | Block::HtmlBlock { position, .. } => *position,
+        }
+    }
+}
+
 /// Inline elements as defined by CommonMark specification
 #[derive(Debug, Clone)]
 pub enum Inline {
@@ -110,6 +131,97 @@ pub enum Inline {
     SoftBreak,
     /// Hard line break
     HardBreak,
+}
+
+impl AstNode for Inline {
+    fn position(&self) -> Option<Position> {
+        None
+    }
+}
+
+/// Unified node wrapper that allows treating any concrete node as a single enum.
+#[derive(Debug, Clone)]
+pub enum Node {
+    Document(Document),
+    Block(Block),
+    Inline(Inline),
+}
+
+impl AstNode for Node {
+    fn position(&self) -> Option<Position> {
+        match self {
+            Node::Document(doc) => doc.position(),
+            Node::Block(block) => block.position(),
+            Node::Inline(inline) => inline.position(),
+        }
+    }
+}
+
+impl From<Document> for Node {
+    fn from(value: Document) -> Self {
+        Node::Document(value)
+    }
+}
+
+impl From<Block> for Node {
+    fn from(value: Block) -> Self {
+        Node::Block(value)
+    }
+}
+
+impl From<Inline> for Node {
+    fn from(value: Inline) -> Self {
+        Node::Inline(value)
+    }
+}
+
+impl Node {
+    /// Returns the wrapped document if this node represents one.
+    pub fn as_document(&self) -> Option<&Document> {
+        if let Node::Document(doc) = self {
+            Some(doc)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the wrapped block if this node represents one.
+    pub fn as_block(&self) -> Option<&Block> {
+        if let Node::Block(block) = self {
+            Some(block)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the wrapped inline if this node represents one.
+    pub fn as_inline(&self) -> Option<&Inline> {
+        if let Node::Inline(inline) = self {
+            Some(inline)
+        } else {
+            None
+        }
+    }
+}
+
+/// Top-level AST container mirroring the lexer's token stream output structure.
+#[derive(Debug, Clone)]
+pub struct Ast {
+    pub root: Document,
+}
+
+impl Ast {
+    pub fn new(root: Document) -> Self {
+        Self { root }
+    }
+
+    pub fn root(&self) -> &Document {
+        &self.root
+    }
+
+    pub fn into_root(self) -> Document {
+        self.root
+    }
 }
 
 /// List type and configuration
@@ -160,8 +272,8 @@ pub fn generate_node_id() -> NodeId {
     NODE_ID_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
-// Implement Node trait for Document
-impl Node for Document {
+// Implement VisitNode trait for Document
+impl VisitNode for Document {
     fn source_position(&self) -> Option<Position> {
         None // Document doesn't have a specific position
     }
@@ -188,8 +300,8 @@ impl Visitable for Document {
     }
 }
 
-// Implement Node trait for Block
-impl Node for Block {
+// Implement VisitNode trait for Block
+impl VisitNode for Block {
     fn source_position(&self) -> Option<Position> {
         match self {
             Block::Heading { position, .. }
@@ -272,8 +384,8 @@ impl Visitable for Block {
     }
 }
 
-// Implement Node trait for Inline
-impl Node for Inline {
+// Implement VisitNode trait for Inline
+impl VisitNode for Inline {
     fn source_position(&self) -> Option<Position> {
         None // Inline elements don't currently track positions
     }
@@ -815,7 +927,7 @@ pub mod utils {
         /// Perform depth-first traversal of the document
         pub fn depth_first<F>(document: &Document, mut visit_fn: F)
         where
-            F: FnMut(&dyn Node),
+            F: FnMut(&dyn VisitNode),
         {
             visit_fn(document);
             for block in &document.blocks {
@@ -826,7 +938,7 @@ pub mod utils {
         /// Depth-first traversal of a block
         fn depth_first_block<F>(block: &Block, visit_fn: &mut F)
         where
-            F: FnMut(&dyn Node),
+            F: FnMut(&dyn VisitNode),
         {
             visit_fn(block);
             match block {
@@ -854,7 +966,7 @@ pub mod utils {
         /// Depth-first traversal of an inline element
         fn depth_first_inline<F>(inline: &Inline, visit_fn: &mut F)
         where
-            F: FnMut(&dyn Node),
+            F: FnMut(&dyn VisitNode),
         {
             visit_fn(inline);
             match inline {
@@ -870,9 +982,9 @@ pub mod utils {
         /// Perform breadth-first traversal of the document
         pub fn breadth_first<F>(document: &Document, mut visit_fn: F)
         where
-            F: FnMut(&dyn Node),
+            F: FnMut(&dyn VisitNode),
         {
-            let mut queue: VecDeque<&dyn Node> = VecDeque::new();
+            let mut queue: VecDeque<&dyn VisitNode> = VecDeque::new();
             queue.push_back(document);
 
             while let Some(node) = queue.pop_front() {
@@ -916,21 +1028,21 @@ pub mod utils {
         }
 
         /// Collect all nodes in depth-first order
-        pub fn collect_depth_first(document: &Document) -> Vec<&dyn Node> {
+        pub fn collect_depth_first(document: &Document) -> Vec<&dyn VisitNode> {
             let mut nodes = Vec::new();
             Self::depth_first_collect(document, &mut nodes);
             nodes
         }
 
         /// Collect all nodes in breadth-first order  
-        pub fn collect_breadth_first(document: &Document) -> Vec<&dyn Node> {
+        pub fn collect_breadth_first(document: &Document) -> Vec<&dyn VisitNode> {
             let mut nodes = Vec::new();
             Self::breadth_first_collect(document, &mut nodes);
             nodes
         }
 
         /// Helper function for depth-first collection
-        fn depth_first_collect<'a>(document: &'a Document, nodes: &mut Vec<&'a dyn Node>) {
+        fn depth_first_collect<'a>(document: &'a Document, nodes: &mut Vec<&'a dyn VisitNode>) {
             nodes.push(document);
             for block in &document.blocks {
                 Self::depth_first_block_collect(block, nodes);
@@ -938,7 +1050,7 @@ pub mod utils {
         }
 
         /// Helper function for depth-first block collection
-        fn depth_first_block_collect<'a>(block: &'a Block, nodes: &mut Vec<&'a dyn Node>) {
+        fn depth_first_block_collect<'a>(block: &'a Block, nodes: &mut Vec<&'a dyn VisitNode>) {
             nodes.push(block);
             match block {
                 Block::Heading { content, .. } | Block::Paragraph { content, .. } => {
@@ -963,7 +1075,7 @@ pub mod utils {
         }
 
         /// Helper function for depth-first inline collection
-        fn depth_first_inline_collect<'a>(inline: &'a Inline, nodes: &mut Vec<&'a dyn Node>) {
+        fn depth_first_inline_collect<'a>(inline: &'a Inline, nodes: &mut Vec<&'a dyn VisitNode>) {
             nodes.push(inline);
             match inline {
                 Inline::Emphasis { content, .. } | Inline::Link { text: content, .. } => {
@@ -976,8 +1088,8 @@ pub mod utils {
         }
 
         /// Helper function for breadth-first collection
-        fn breadth_first_collect<'a>(document: &'a Document, nodes: &mut Vec<&'a dyn Node>) {
-            let mut queue: VecDeque<&'a dyn Node> = VecDeque::new();
+        fn breadth_first_collect<'a>(document: &'a Document, nodes: &mut Vec<&'a dyn VisitNode>) {
+            let mut queue: VecDeque<&'a dyn VisitNode> = VecDeque::new();
             queue.push_back(document);
 
             while let Some(node) = queue.pop_front() {
@@ -1568,11 +1680,11 @@ mod tests {
         let document = utils::NodeBuilder::document(vec![paragraph]);
 
         // Test downcasting through the Node trait
-        let node: &dyn Node = &document;
+        let node: &dyn VisitNode = &document;
         assert!(node.as_any().downcast_ref::<Document>().is_some());
         assert!(node.as_any().downcast_ref::<Block>().is_none());
 
-        let block_node: &dyn Node = &document.blocks[0];
+        let block_node: &dyn VisitNode = &document.blocks[0];
         assert!(block_node.as_any().downcast_ref::<Block>().is_some());
         assert!(block_node.as_any().downcast_ref::<Document>().is_none());
     }

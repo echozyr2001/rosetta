@@ -66,7 +66,7 @@ use crate::error::Result;
 use crate::lexer::LexToken;
 use crate::parser::rules::MarkdownParseRule;
 use crate::parser::state::ParserState;
-use crate::parser::traits::{DocumentNode, ParseRule};
+use crate::parser::traits::{AstNode, ParseRule};
 use crate::traits::*;
 use std::marker::PhantomData;
 
@@ -74,7 +74,7 @@ use std::marker::PhantomData;
 pub struct ParserDriver<Tok, Document, Rule>
 where
     Tok: LexToken,
-    Document: DocumentNode,
+    Document: AstNode,
     Rule: ParseRule<Tok, Document>,
 {
     rule: Rule,
@@ -84,7 +84,7 @@ where
 impl<Tok, Document, Rule> ParserDriver<Tok, Document, Rule>
 where
     Tok: LexToken,
-    Document: DocumentNode,
+    Document: AstNode,
     Rule: ParseRule<Tok, Document>,
 {
     pub fn new(rule: Rule) -> Self {
@@ -103,7 +103,7 @@ where
 impl<Tok, Document, Rule> Clone for ParserDriver<Tok, Document, Rule>
 where
     Tok: LexToken,
-    Document: DocumentNode,
+    Document: AstNode,
     Rule: ParseRule<Tok, Document> + Clone,
 {
     fn clone(&self) -> Self {
@@ -123,7 +123,10 @@ where
 /// types because the underlying nom-based parser works with these specific types.
 pub fn parse<'input, C>(context: &mut C) -> Result<C::Document>
 where
-    C: ParsingContext<Token = crate::lexer::token::Token<'input>, Document = crate::ast::Document>,
+    C: ParsingContext<
+            Token = crate::lexer::token::Token<'input>,
+            Document = crate::parser::ast::Document,
+        >,
 {
     parse_document_with_rule(context, MarkdownParseRule::default())
 }
@@ -150,7 +153,7 @@ pub fn parse_document_with_rule<C, Rule>(context: &mut C, rule: Rule) -> Result<
 where
     C: ParsingContext,
     C::Token: LexToken,
-    C::Document: DocumentNode,
+    C::Document: AstNode,
     Rule: ParseRule<C::Token, C::Document>,
 {
     // Collect all tokens from the context
@@ -169,7 +172,10 @@ where
 
 pub fn parse_document<'input, C>(context: &mut C) -> Result<C::Document>
 where
-    C: ParsingContext<Token = crate::lexer::token::Token<'input>, Document = crate::ast::Document>,
+    C: ParsingContext<
+            Token = crate::lexer::token::Token<'input>,
+            Document = crate::parser::ast::Document,
+        >,
 {
     parse_document_with_rule(context, MarkdownParseRule::default())
 }
@@ -178,8 +184,8 @@ where
 mod tests {
     use super::*;
     use crate::adapters::DefaultParsingContext;
-    use crate::ast::Block;
     use crate::parser::ParserConfig;
+    use crate::parser::ast::Block;
 
     #[test]
     fn test_parse_heading() {

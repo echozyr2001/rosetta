@@ -1,5 +1,5 @@
 use super::*;
-use crate::ast::{Block, Inline};
+use crate::parser::ast::{Block, Inline};
 
 #[test]
 fn parses_heading_and_paragraph() {

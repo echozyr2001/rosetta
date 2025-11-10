@@ -2,10 +2,10 @@
 ///
 /// This module demonstrates how to wrap existing implementations
 /// to make them compatible with the component trait system.
-use crate::ast::{Block, Document, Inline};
 use crate::error::{ErrorHandler, Result};
 use crate::lexer::{LexToken, Lexer, Position, token::Token};
 use crate::parser::ParserConfig;
+use crate::parser::ast::{Block, Document, Inline};
 use crate::traits::*;
 /// Adapter that makes the existing Lexer compatible with the token
 /// provider component.
@@ -71,7 +71,7 @@ impl AstBuilder for DefaultAstBuilder {
     fn build_document(&self, blocks: Vec<Self::Block>) -> Self::Document {
         Document {
             blocks,
-            source_map: crate::ast::SourceMap::new(),
+            source_map: crate::parser::ast::SourceMap::new(),
         }
     }
 
@@ -129,16 +129,16 @@ impl AstBuilder for DefaultAstBuilder {
     ) -> Self::Block {
         // Convert component ListKind to AST ListKind
         let ast_kind = match kind {
-            ListKind::Bullet { marker } => crate::ast::ListKind::Bullet { marker },
+            ListKind::Bullet { marker } => crate::parser::ast::ListKind::Bullet { marker },
             ListKind::Ordered { start, delimiter } => {
-                crate::ast::ListKind::Ordered { start, delimiter }
+                crate::parser::ast::ListKind::Ordered { start, delimiter }
             }
         };
 
         // Convert component ListItem to AST ListItem
         let ast_items = items
             .into_iter()
-            .map(|item| crate::ast::ListItem {
+            .map(|item| crate::parser::ast::ListItem {
                 content: item.content,
                 tight: item.tight,
                 task_list_marker: item.task_list_marker,
@@ -402,34 +402,6 @@ impl<'input> ParsingContext for DefaultParsingContext<'input> {
             }
             let _ = self.advance();
         }
-    }
-}
-
-impl InlineNode for Inline {
-    fn position(&self) -> Option<Position> {
-        None // Existing Inline doesn't track position
-    }
-}
-
-impl BlockNode for Block {
-    fn position(&self) -> Option<Position> {
-        match self {
-            Block::Heading { position, .. }
-            | Block::Paragraph { position, .. }
-            | Block::CodeBlock { position, .. }
-            | Block::BlockQuote { position, .. }
-            | Block::List { position, .. }
-            | Block::ThematicBreak { position, .. }
-            | Block::HtmlBlock { position, .. } => *position,
-        }
-    }
-}
-
-impl DocumentNode for Document {
-    type Block = Block;
-
-    fn blocks(&self) -> &[Self::Block] {
-        &self.blocks
     }
 }
 

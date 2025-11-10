@@ -60,8 +60,10 @@ impl<C> Parser<C> {
 
 impl<'input, C> Parser<C>
 where
-    C: ParsingContext<Token = crate::lexer::token::Token<'input>, Document = crate::ast::Document>
-        + CanAccessParserConfig<Config = ParserConfig>,
+    C: ParsingContext<
+            Token = crate::lexer::token::Token<'input>,
+            Document = crate::parser::ast::Document,
+        > + CanAccessParserConfig<Config = ParserConfig>,
 {
     /// Returns the current position in the input.
     pub fn position(&self) -> Position {
@@ -71,10 +73,10 @@ where
     /// Returns a reference to the collected reference definitions.
     pub fn reference_definitions(
         &self,
-    ) -> &std::collections::HashMap<String, crate::ast::LinkReference> {
+    ) -> &std::collections::HashMap<String, crate::parser::ast::LinkReference> {
         // Return empty map for now - can be extended later
         static EMPTY_MAP: std::sync::LazyLock<
-            std::collections::HashMap<String, crate::ast::LinkReference>,
+            std::collections::HashMap<String, crate::parser::ast::LinkReference>,
         > = std::sync::LazyLock::new(std::collections::HashMap::new);
         &EMPTY_MAP
     }

@@ -1,6 +1,5 @@
 // Core modules
 pub mod adapters;
-pub mod ast;
 pub mod codegen;
 pub mod dom;
 pub mod error;
@@ -10,13 +9,14 @@ pub mod performance;
 pub mod traits;
 
 // Re-export key types for public API
-pub use ast::{Block, Document, Inline, Node, Visitable, Visitor};
 pub use codegen::{
     CustomRenderer, HtmlGenerator, HtmlValidator, HtmlWriter, OutputConfig, OutputConfigBuilder,
 };
 pub use dom::DomNode;
 pub use error::{MarkdownError, Result};
 pub use lexer::{Lexer, Position, token::Token};
+pub use parser::ast;
+pub use parser::ast::{Block, Document, Inline, Node, Visitable, Visitor};
 pub use parser::{Parser, ParserConfig, parse};
 pub use performance::{ParallelConfig, PerformanceOptimizer, ZeroCopyStr};
 
@@ -92,9 +92,9 @@ pub fn parse_markdown(markdown: &str) -> String {
 /// ```
 pub fn to_html(markdown: &str) -> String {
     // 1. Parsing (includes lexical analysis internally)
-    let root = parser::parse(markdown).unwrap_or_else(|_| ast::Document {
+    let root = parser::parse(markdown).unwrap_or_else(|_| parser::ast::Document {
         blocks: Vec::new(),
-        source_map: ast::SourceMap::new(),
+        source_map: parser::ast::SourceMap::new(),
     });
 
     // 2. AST to DOM conversion (Intermediate Representation)
@@ -120,9 +120,9 @@ pub fn to_html(markdown: &str) -> String {
 ///
 /// Returns the root Document of the AST
 pub fn parse_to_ast(markdown: &str) -> Document {
-    parser::parse(markdown).unwrap_or_else(|_| ast::Document {
+    parser::parse(markdown).unwrap_or_else(|_| parser::ast::Document {
         blocks: Vec::new(),
-        source_map: ast::SourceMap::new(),
+        source_map: parser::ast::SourceMap::new(),
     })
 }
 
@@ -183,7 +183,10 @@ mod tests {
         let markdown = "# Hello, World!";
         let document = parse_to_ast(markdown);
         assert_eq!(document.blocks.len(), 1);
-        assert!(matches!(document.blocks[0], ast::Block::Heading { .. }));
+        assert!(matches!(
+            document.blocks[0],
+            parser::ast::Block::Heading { .. }
+        ));
     }
 
     // API Integration Tests for Task 7.4

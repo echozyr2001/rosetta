@@ -1,12 +1,12 @@
-/// Streaming parser implementation for large documents.
-/// This module provides streaming capabilities for parsing large Markdown documents
-/// that may not fit entirely in memory. It implements incremental parsing with
-/// backpressure handling and memory management.
-use crate::ast::{Block, Document, SourceMap};
 use crate::error::{MarkdownError, Result};
 use crate::lexer::Position;
 use crate::parser::Parser;
 use crate::parser::ParserConfig;
+/// Streaming parser implementation for large documents.
+/// This module provides streaming capabilities for parsing large Markdown documents
+/// that may not fit entirely in memory. It implements incremental parsing with
+/// backpressure handling and memory management.
+use crate::parser::ast::{Block, Document, SourceMap};
 use std::collections::VecDeque;
 use std::io::{BufReader, Read};
 

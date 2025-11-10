@@ -16,8 +16,8 @@ pub use token_traits::{CanProvideTokens, TokenProvider, TokenProviderComponent};
 
 // Re-export AST layer traits
 pub use ast_traits::{
-    AstBuilder, AstBuilderComponent, AstBuilderProvider, AstTransformer, AstValidator, BlockNode,
-    CanBuildAst, DocumentNode, InlineNode, ListItem, ListKind,
+    AstBuilder, AstBuilderComponent, AstBuilderProvider, AstNode, AstTransformer, AstValidator,
+    CanBuildAst, ListItem, ListKind,
 };
 
 // Re-export context coordination traits
