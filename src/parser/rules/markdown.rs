@@ -1,99 +1,193 @@
-use crate::error::MarkdownError;
-use crate::lexer::{Position, token::Token};
-use crate::parser::ast::{Document, SourceMap};
-use crate::parser::rules::block_patterns::skip_ws_nl;
-use crate::parser::rules::block_rules::{BlockParseResult, BlockParserFn, MARKDOWN_BLOCK_PARSERS};
-use crate::parser::rules::input::TokenSlice;
+use crate::error::Result;
+use crate::lexer::token::{ListKind as LexerListKind, Token};
 use crate::parser::state::ParserState;
-use crate::parser::traits::ParseRule;
-use nom::{Err as NomErr, error::ErrorKind};
+use crate::parser::traits::{ListItem, ListKind, ParseRule};
+use crate::traits::ParsingContext;
 
-#[derive(Clone, Copy)]
-pub struct MarkdownParseRule {
-    block_parsers: &'static [BlockParserFn],
-}
-
-impl Default for MarkdownParseRule {
-    fn default() -> Self {
-        Self {
-            block_parsers: MARKDOWN_BLOCK_PARSERS,
-        }
-    }
-}
+#[derive(Clone, Copy, Default)]
+pub struct MarkdownParseRule;
 
 impl MarkdownParseRule {
-    fn parse_with_rules<'a>(&self, input: TokenSlice<'a>) -> BlockParseResult<'a> {
-        let mut last_err = NomErr::Error(nom::error::Error::new(input, ErrorKind::Alt));
+    fn skip_trivia<'ctx, 'input, C>(&self, state: &mut ParserState<'ctx, C>) -> Result<()>
+    where
+        C: ParsingContext<Token = Token<'input>>,
+    {
+        loop {
+            let should_skip = match state.current_token() {
+                Some(token) => matches!(
+                    token,
+                    Token::Whitespace(_)
+                        | Token::LineEnding(_)
+                        | Token::SoftBreak(_)
+                        | Token::HardBreak(_)
+                ),
+                None => false,
+            };
 
-        for parser in self.block_parsers {
-            match parser(input) {
-                Ok(result) => return Ok(result),
-                Err(NomErr::Error(e)) => last_err = NomErr::Error(e),
-                Err(other @ NomErr::Incomplete(_)) | Err(other @ NomErr::Failure(_)) => {
-                    return Err(other);
-                }
+            if !should_skip {
+                break;
+            }
+
+            state.advance()?;
+
+            if state.is_exhausted() {
+                break;
             }
         }
 
-        Err(last_err)
+        Ok(())
+    }
+
+    fn parse_block<'ctx, 'input, C>(
+        &self,
+        state: &mut ParserState<'ctx, C>,
+    ) -> Result<Option<C::Block>>
+    where
+        C: ParsingContext<Token = Token<'input>>,
+    {
+        let token = match state.current_token() {
+            Some(token) => token,
+            None => return Ok(None),
+        };
+
+        match token {
+            Token::AtxHeading(heading) => {
+                let level = heading.level;
+                let text = heading.raw_content.trim().to_string();
+                let position = Some(heading.position);
+
+                state.advance()?;
+
+                let builder = state.ast_builder();
+                let content = vec![builder.build_text(text)];
+                Ok(Some(builder.build_heading(level, content, position)))
+            }
+            Token::SetextHeading(heading) => {
+                let level = heading.level;
+                let text = "Setext Heading".to_string();
+                let position = Some(heading.position);
+
+                state.advance()?;
+
+                let builder = state.ast_builder();
+                let content = vec![builder.build_text(text)];
+                Ok(Some(builder.build_heading(level, content, position)))
+            }
+            Token::CodeBlock(code) => {
+                let info = code.info_string.map(|s| s.to_string());
+                let language = code
+                    .info_string
+                    .and_then(|info| info.split_whitespace().next().map(str::to_string));
+                let content = code.raw_content.to_string();
+                let position = Some(code.position);
+
+                state.advance()?;
+
+                let builder = state.ast_builder();
+                Ok(Some(
+                    builder.build_code_block(info, content, language, position),
+                ))
+            }
+            Token::BlockQuote(block_quote) => {
+                let position = Some(block_quote.position);
+
+                state.advance()?;
+
+                let builder = state.ast_builder();
+                let paragraph = builder.build_paragraph(
+                    vec![builder.build_text("Blockquote content".to_string())],
+                    position,
+                );
+                Ok(Some(builder.build_block_quote(vec![paragraph], position)))
+            }
+            Token::ListMarker(marker) => {
+                let position = Some(marker.position);
+                let list_kind = match &marker.marker {
+                    LexerListKind::Bullet { marker } => ListKind::Bullet { marker: *marker },
+                    LexerListKind::Ordered { start, delimiter } => ListKind::Ordered {
+                        start: *start,
+                        delimiter: *delimiter,
+                    },
+                };
+
+                state.advance()?;
+
+                let builder = state.ast_builder();
+                let paragraph = builder.build_paragraph(
+                    vec![builder.build_text("List item content".to_string())],
+                    position,
+                );
+                let item = ListItem {
+                    content: vec![paragraph],
+                    tight: true,
+                    task_list_marker: None,
+                };
+                Ok(Some(builder.build_list(
+                    list_kind,
+                    true,
+                    vec![item],
+                    position,
+                )))
+            }
+            Token::ThematicBreak(break_token) => {
+                let position = Some(break_token.position);
+                state.advance()?;
+                let builder = state.ast_builder();
+                Ok(Some(builder.build_thematic_break(position)))
+            }
+            Token::Text(text) => {
+                let content = text.lexeme.to_string();
+                let position = Some(text.position);
+
+                state.advance()?;
+
+                let builder = state.ast_builder();
+                let inline = builder.build_text(content);
+                Ok(Some(builder.build_paragraph(vec![inline], position)))
+            }
+            Token::HtmlBlock(html) => {
+                let content = html.raw.to_string();
+                let position = Some(html.position);
+
+                state.advance()?;
+
+                let builder = state.ast_builder();
+                Ok(Some(builder.build_html_block(content, position)))
+            }
+            Token::Eof => Ok(None),
+            _ => {
+                state.advance()?;
+                Ok(None)
+            }
+        }
     }
 }
 
-impl<'input> ParseRule<Token<'input>, Document> for MarkdownParseRule {
-    fn parse(&mut self, state: &mut ParserState<Token<'input>>) -> crate::error::Result<Document> {
+impl<'input, C> ParseRule<C> for MarkdownParseRule
+where
+    C: ParsingContext<Token = Token<'input>>,
+{
+    fn parse(&mut self, state: &mut ParserState<'_, C>) -> Result<C::Document> {
         let mut blocks = Vec::new();
 
         loop {
+            self.skip_trivia(state)?;
+
             if state.is_exhausted() {
                 break;
             }
 
-            let remaining = state.remaining();
-            let start_len = remaining.len();
-            let slice = TokenSlice::new(remaining);
-
-            let (after_ws, _) = match skip_ws_nl(slice) {
-                Ok(res) => res,
-                Err(NomErr::Error(_)) | Err(NomErr::Incomplete(_)) => {
-                    state.finish();
-                    break;
+            match self.parse_block(state)? {
+                Some(block) => blocks.push(block),
+                None => {
+                    if state.is_exhausted() {
+                        break;
+                    }
                 }
-                Err(err) => {
-                    return Err(MarkdownError::parse_error(
-                        Position::new(),
-                        format!("Failed to skip whitespace: {:?}", err),
-                    ));
-                }
-            };
-
-            if after_ws.is_empty() {
-                state.finish();
-                break;
             }
-
-            let (after_block, block) = match self.parse_with_rules(after_ws) {
-                Ok(res) => res,
-                Err(NomErr::Error(_)) | Err(NomErr::Incomplete(_)) => {
-                    state.finish();
-                    break;
-                }
-                Err(err) => {
-                    return Err(MarkdownError::parse_error(
-                        Position::new(),
-                        format!("Failed to parse block: {:?}", err),
-                    ));
-                }
-            };
-
-            blocks.push(block);
-
-            let consumed = start_len - after_block.len();
-            state.advance(consumed);
         }
 
-        Ok(Document {
-            blocks,
-            source_map: SourceMap::new(),
-        })
+        let builder = state.ast_builder();
+        Ok(builder.build_document(blocks))
     }
 }

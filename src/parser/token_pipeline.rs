@@ -63,43 +63,15 @@
 /// let document = token_pipeline::parse(&mut context)?;
 /// ```
 use crate::error::Result;
-use crate::lexer::LexToken;
 use crate::parser::rules::MarkdownParseRule;
 use crate::parser::state::ParserState;
-use crate::parser::traits::{AstNode, ParseRule};
+use crate::parser::traits::ParseRule;
 use crate::traits::*;
-
-fn collect_tokens<C>(context: &mut C) -> Result<Vec<C::Token>>
-where
-    C: ParsingContext,
-    C::Token: LexToken,
-{
-    let mut tokens = Vec::new();
-
-    while !context.is_at_end() {
-        if let Some(token) = context.current_token() {
-            tokens.push(token.clone());
-        }
-        context.advance()?;
-    }
-
-    Ok(tokens)
-}
-
-fn parse_tokens<Tok, Document, Rule>(tokens: Vec<Tok>, mut rule: Rule) -> Result<Document>
-where
-    Tok: LexToken,
-    Document: AstNode,
-    Rule: ParseRule<Tok, Document>,
-{
-    let mut state = ParserState::new(&tokens);
-    rule.parse(&mut state)
-}
 
 /// Parse a document using any context that implements the token pipeline traits.
 ///
-/// This function collects all tokens from the context and uses nom-based
-/// rule sets to produce a Document AST.
+/// This function drives the parser directly against the context, pulling
+/// tokens lazily as rules require them.
 ///
 /// **Type Constraints**: Requires the context to use concrete `Token` and `Document`
 /// types because the underlying nom-based parser works with these specific types.
@@ -110,36 +82,25 @@ where
             Document = crate::parser::ast::Document,
         >,
 {
-    parse_document_with_rule(context, MarkdownParseRule::default())
+    parse_document_with_rule(context, MarkdownParseRule)
 }
 
 /// Parse a complete document from a compatible context.
 ///
 /// **Implementation Strategy**:
-/// 1. Collect all tokens from the context
-/// 2. Use nom-based rule sets to parse the token sequence
+/// 1. Build a streaming `ParserState` over the context
+/// 2. Delegate to the configured rule implementation
 /// 3. Return the parsed Document
 ///
-/// This approach combines:
-/// - Context flexibility (component implementations can be swapped)
-/// - nom's power (parser combinators)
-/// - Token-based parsing (better position tracking)
-///
-/// **Type Constraints**: Currently requires concrete `Token` and `Document` types because
-/// rule modules are implemented with nom combinators that work on specific token types.
-/// This is a reasonable trade-off that gives us:
-/// - The power of nom's parser combinators
-/// - Type safety and performance
-/// - Still allows swapping context implementations (as long as they use the same token types)
-pub fn parse_document_with_rule<C, Rule>(context: &mut C, rule: Rule) -> Result<C::Document>
+/// This approach keeps the parser agnostic of how tokens are sourced while still
+/// benefitting from the component abstraction.
+pub fn parse_document_with_rule<C, Rule>(context: &mut C, mut rule: Rule) -> Result<C::Document>
 where
     C: ParsingContext,
-    C::Token: LexToken,
-    C::Document: AstNode,
-    Rule: ParseRule<C::Token, C::Document>,
+    Rule: ParseRule<C>,
 {
-    let tokens = collect_tokens(context)?;
-    parse_tokens(tokens, rule)
+    let mut state = ParserState::new(context);
+    rule.parse(&mut state)
 }
 
 pub fn parse_document<'input, C>(context: &mut C) -> Result<C::Document>
@@ -149,7 +110,7 @@ where
             Document = crate::parser::ast::Document,
         >,
 {
-    parse_document_with_rule(context, MarkdownParseRule::default())
+    parse_document_with_rule(context, MarkdownParseRule)
 }
 
 #[cfg(test)]

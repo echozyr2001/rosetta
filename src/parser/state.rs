@@ -1,39 +1,83 @@
+use crate::error::Result;
 use crate::lexer::LexToken;
+use crate::traits::{CanBuildAst, ParsingContext};
 
-/// ParserState keeps track of the remaining token slice and the current cursor.
-pub struct ParserState<'a, Tok>
+/// Streaming parser state that drives token consumption directly from the
+/// underlying parsing context. This avoids materialising the full token stream
+/// up front and keeps lexing lazy.
+pub struct ParserState<'ctx, C>
 where
-    Tok: LexToken,
+    C: ParsingContext,
 {
-    tokens: &'a [Tok],
-    offset: usize,
+    context: &'ctx mut C,
 }
 
-impl<'a, Tok> ParserState<'a, Tok>
+impl<'ctx, C> ParserState<'ctx, C>
 where
-    Tok: LexToken,
+    C: ParsingContext,
+    C::Token: LexToken,
 {
-    pub fn new(tokens: &'a [Tok]) -> Self {
-        Self { tokens, offset: 0 }
+    pub fn new(context: &'ctx mut C) -> Self {
+        Self { context }
     }
 
-    /// Returns the slice of tokens yet to be consumed.
-    pub fn remaining(&self) -> &'a [Tok] {
-        &self.tokens[self.offset..]
+    /// Borrow the underlying parsing context.
+    pub fn context(&mut self) -> &mut C {
+        self.context
     }
 
-    /// Advances the internal cursor by `count` tokens.
-    pub fn advance(&mut self, count: usize) {
-        self.offset = (self.offset + count).min(self.tokens.len());
+    /// Returns a clone of the current token without consuming it.
+    pub fn current_token(&self) -> Option<C::Token> {
+        self.context.current_token().cloned()
     }
 
-    /// Returns true when all tokens have been consumed.
+    /// Consume the current token and advance to the next one.
+    pub fn consume_token(&mut self) -> Result<Option<C::Token>> {
+        if self.is_exhausted() {
+            return Ok(None);
+        }
+
+        let token = self.context.current_token().cloned();
+        self.advance()?;
+        Ok(token)
+    }
+
+    /// Advance to the next token if we are not already at EOF.
+    pub fn advance(&mut self) -> Result<()> {
+        if self.is_exhausted() {
+            return Ok(());
+        }
+
+        self.context.advance()
+    }
+
+    /// Peek at the next token without advancing the underlying context.
+    pub fn peek_token(&mut self) -> Result<Option<C::Token>> {
+        if self.is_exhausted() {
+            return Ok(None);
+        }
+
+        let token = self.context.peek_token()?;
+        Ok(Some(token))
+    }
+
+    /// Returns true if the current token is EOF or the context ran out of
+    /// tokens.
     pub fn is_exhausted(&self) -> bool {
-        self.offset >= self.tokens.len()
+        self.context
+            .current_token()
+            .map(|token| token.is_eof())
+            .unwrap_or(true)
     }
 
-    /// Consumes all remaining tokens.
-    pub fn finish(&mut self) {
-        self.offset = self.tokens.len();
+    /// Shortcut access to the AST builder exposed by the context.
+    pub fn ast_builder(
+        &self,
+    ) -> &dyn crate::parser::traits::AstBuilder<
+        Inline = <C as CanBuildAst>::Inline,
+        Block = <C as CanBuildAst>::Block,
+        Document = <C as CanBuildAst>::Document,
+    > {
+        self.context.ast_builder()
     }
 }

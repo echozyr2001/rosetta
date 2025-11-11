@@ -102,11 +102,11 @@ pub struct ListItem<Block> {
 /// Implementations can offer alternative parsing strategies that
 /// consume token sequences and produce AST documents.
 use super::state::ParserState;
+use crate::traits::ParsingContext;
 
-pub trait ParseRule<Tok, Document>
+pub trait ParseRule<C>
 where
-    Tok: crate::lexer::LexToken,
-    Document: AstNode,
+    C: ParsingContext,
 {
-    fn parse(&mut self, state: &mut ParserState<'_, Tok>) -> Result<Document>;
+    fn parse(&mut self, state: &mut ParserState<'_, C>) -> Result<C::Document>;
 }
