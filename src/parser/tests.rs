@@ -1,5 +1,5 @@
 use crate::lexer::{LexToken, Lexer};
-use crate::parser::ast::{Block, Inline, ListKind};
+use crate::parser::ast::{Block, Document, Inline, ListKind};
 use crate::parser::core::{ParseAttempt, Parser};
 use crate::parser::rules::MarkdownParseRule;
 
@@ -24,6 +24,35 @@ fn parse_document(input: &'static str) -> crate::parser::ast::Document {
             ParseAttempt::Complete(document) => {
                 assert!(parser.is_finished());
                 return document;
+            }
+        }
+    }
+}
+
+fn parse_document_with_chunk_size(input: &'static str, chunk_size: usize) -> Document {
+    let mut parser = Parser::<'static, MarkdownParseRule>::new(MarkdownParseRule);
+    let mut lexer = Lexer::new(input);
+    let mut buffered = Vec::new();
+
+    loop {
+        let token = lexer
+            .next_token()
+            .expect("lexer should yield tokens until EOF");
+        let eof = token.is_eof();
+        buffered.push(token);
+
+        if buffered.len() >= chunk_size || eof {
+            for token in buffered.drain(..) {
+                parser.push_token(token).expect("parser accepts token");
+            }
+
+            match parser.try_parse().expect("parser attempt succeeds") {
+                ParseAttempt::NeedMoreTokens => {
+                    if eof {
+                        panic!("parser requested more tokens after EOF");
+                    }
+                }
+                ParseAttempt::Complete(document) => return document,
             }
         }
     }
@@ -225,4 +254,93 @@ fn preserves_positions_when_available() {
             }
         }
     }
+}
+
+#[test]
+fn streaming_parser_requires_eof_before_completion() {
+    let mut parser = Parser::<'static, MarkdownParseRule>::new(MarkdownParseRule);
+    let mut lexer = Lexer::new("# Heading");
+
+    let token = lexer.next_token().expect("token");
+    assert!(!token.is_eof());
+    parser.push_token(token).unwrap();
+    assert!(matches!(
+        parser.try_parse().unwrap(),
+        ParseAttempt::NeedMoreTokens
+    ));
+
+    let eof = lexer.next_token().expect("eof token");
+    assert!(eof.is_eof());
+    parser.push_token(eof).unwrap();
+    assert!(matches!(
+        parser.try_parse().unwrap(),
+        ParseAttempt::Complete(_)
+    ));
+}
+
+#[test]
+fn streaming_parser_handles_chunked_input() {
+    let doc = parse_document_with_chunk_size(
+        "# Title\n\nFirst paragraph.\n\n- item one\n- item two\n",
+        2,
+    );
+    assert!(doc.blocks.len() >= 2);
+    assert!(
+        doc.blocks
+            .iter()
+            .any(|b| matches!(b, Block::Heading { .. }))
+    );
+    assert!(doc.blocks.iter().any(|b| matches!(b, Block::List { .. })));
+}
+
+#[test]
+fn test_complex_document_structure() {
+    let input = r"# Main Title
+
+This is an introduction paragraph.
+
+## Section 1
+
+> This is a blockquote.
+
+- First item
+- Second item
+
+```
+code block
+```
+
+---
+";
+
+    let doc = parse_document_with_chunk_size(input, 3);
+    assert!(doc.blocks.len() >= 5);
+
+    let has_heading = doc
+        .blocks
+        .iter()
+        .any(|b| matches!(b, Block::Heading { .. }));
+    let has_paragraph = doc
+        .blocks
+        .iter()
+        .any(|b| matches!(b, Block::Paragraph { .. }));
+    let has_blockquote = doc
+        .blocks
+        .iter()
+        .any(|b| matches!(b, Block::BlockQuote { .. }));
+    let has_list = doc.blocks.iter().any(|b| matches!(b, Block::List { .. }));
+    let has_code = doc
+        .blocks
+        .iter()
+        .any(|b| matches!(b, Block::CodeBlock { .. }));
+    let has_thematic = doc
+        .blocks
+        .iter()
+        .any(|b| matches!(b, Block::ThematicBreak { .. }));
+
+    assert!(has_heading && has_paragraph);
+    assert!(has_blockquote);
+    assert!(has_list);
+    assert!(has_code);
+    assert!(has_thematic);
 }

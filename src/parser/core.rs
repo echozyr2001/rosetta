@@ -105,12 +105,13 @@ where
         }
 
         let snapshot: TokenSlice<'_, Token<'input>> = self.buffer.snapshot();
-        let tokens = snapshot.tokens();
-        let saw_eof = tokens.iter().any(|tok| tok.is_eof());
 
         if snapshot.is_empty() {
             return Ok(ParseAttempt::NeedMoreTokens);
         }
+
+        let tokens = snapshot.tokens();
+        let saw_eof = tokens.iter().any(|tok| tok.is_eof());
 
         let initial_len = snapshot.len();
         let parse_result = self.rule.parse(snapshot);
@@ -119,6 +120,12 @@ where
             Ok((rest, document)) => {
                 let remaining = rest.len();
                 let trailing_tokens = rest.tokens();
+
+                if trailing_tokens.is_empty() && !saw_eof {
+                    // Parsed everything currently buffered but have not observed EOF yet.
+                    // Keep the buffer as-is so additional tokens can be appended and retried.
+                    return Ok(ParseAttempt::NeedMoreTokens);
+                }
 
                 if trailing_tokens.iter().any(|tok| !tok.is_eof()) {
                     return Err(ParserError::TrailingTokens { remaining });
@@ -137,6 +144,134 @@ where
                 Err(ParserError::from_nom(err.code))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::token::{AtxHeadingToken, TextToken, Token};
+    use crate::lexer::{Lexer, Position};
+    use crate::parser::ast::{Block, Document};
+    use crate::parser::rules::MarkdownParseRule;
+    use crate::parser::traits::ParseRule;
+    use nom::{Err as NomErr, IResult, error::Error as NomError};
+
+    #[test]
+    fn parser_requires_eof_before_completion() {
+        let mut parser = Parser::new(MarkdownParseRule);
+        let mut lexer = Lexer::new("# Heading");
+
+        let first = lexer.next_token().expect("token");
+        assert!(!first.is_eof());
+        parser.push_token(first).unwrap();
+
+        assert!(
+            matches!(parser.try_parse().unwrap(), ParseAttempt::NeedMoreTokens),
+            "parser should request more tokens before EOF"
+        );
+
+        let eof = lexer.next_token().expect("eof token");
+        assert!(eof.is_eof());
+        parser.push_token(eof).unwrap();
+
+        match parser.try_parse().unwrap() {
+            ParseAttempt::Complete(document) => {
+                assert_eq!(document.blocks.len(), 1);
+                assert!(matches!(document.blocks[0], Block::Heading { .. }));
+            }
+            ParseAttempt::NeedMoreTokens => panic!("expected completion after EOF"),
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct EchoRule;
+
+    impl<'a, 'input> ParseRule<'a, Token<'input>, Document> for EchoRule
+    where
+        'input: 'a,
+    {
+        fn parse(
+            &self,
+            input: TokenSlice<'a, Token<'input>>,
+        ) -> IResult<TokenSlice<'a, Token<'input>>, Document> {
+            Ok((input, Document { blocks: Vec::new() }))
+        }
+    }
+
+    #[test]
+    fn parser_reports_trailing_tokens_when_rule_leaves_data() {
+        let mut parser = Parser::new(EchoRule);
+        let token = Token::Text(TextToken {
+            lexeme: "text",
+            position: Position::default(),
+        });
+        parser.push_token(token).unwrap();
+
+        let err = parser
+            .try_parse()
+            .expect_err("expected trailing token error");
+        assert!(matches!(err, ParserError::TrailingTokens { remaining } if remaining == 1));
+    }
+
+    #[derive(Clone, Debug)]
+    struct ErrorRule;
+
+    impl<'a, 'input> ParseRule<'a, Token<'input>, Document> for ErrorRule
+    where
+        'input: 'a,
+    {
+        fn parse(
+            &self,
+            input: TokenSlice<'a, Token<'input>>,
+        ) -> IResult<TokenSlice<'a, Token<'input>>, Document> {
+            Err(NomErr::Error(NomError::new(input, NomErrorKind::Tag)))
+        }
+    }
+
+    #[test]
+    fn parser_converts_nom_errors() {
+        let mut parser = Parser::new(ErrorRule);
+        let token = Token::Text(TextToken {
+            lexeme: "text",
+            position: Position::default(),
+        });
+        parser.push_token(token).unwrap();
+
+        let err = parser.try_parse().expect_err("expected nom error");
+        assert!(matches!(
+            err,
+            ParserError::NomError {
+                kind: NomErrorKind::Tag
+            }
+        ));
+    }
+
+    #[test]
+    fn parser_rejects_tokens_after_completion() {
+        let mut parser = Parser::new(MarkdownParseRule);
+        let mut lexer = Lexer::new("# Heading\n");
+
+        loop {
+            let token = lexer.next_token().expect("token");
+            let eof = token.is_eof();
+            parser.push_token(token).unwrap();
+            if let ParseAttempt::Complete(_) = parser.try_parse().unwrap() {
+                assert!(eof, "completion must occur on EOF token");
+                break;
+            }
+        }
+
+        let result = parser.push_token(Token::AtxHeading(AtxHeadingToken {
+            level: 1,
+            marker_count: 1,
+            leading_whitespace: 0,
+            raw_marker: "#",
+            raw_content: "again",
+            closing_sequence: "",
+            position: Position::default(),
+        }));
+        assert!(matches!(result, Err(ParserError::AlreadyFinished)));
     }
 }
 

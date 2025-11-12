@@ -73,3 +73,36 @@ impl<'a, Tok> Slice<RangeTo<usize>> for TokenSlice<'a, Tok> {
         Self::new(&self.tokens[range])
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nom::InputTake;
+
+    #[test]
+    fn slice_take_and_split() {
+        let data = [1, 2, 3, 4];
+        let slice = TokenSlice::new(&data);
+        let taken = slice.take(2);
+        assert_eq!(taken.tokens(), &[1, 2]);
+
+        let (rest, prefix) = slice.take_split(3);
+        assert_eq!(prefix.tokens(), &[1, 2, 3]);
+        assert_eq!(rest.tokens(), &[4]);
+    }
+
+    #[test]
+    fn slice_ranges() {
+        let data = [1, 2, 3, 4, 5];
+        let slice = TokenSlice::new(&data);
+
+        let mid = slice.slice(1..4);
+        assert_eq!(mid.tokens(), &[2, 3, 4]);
+
+        let from = slice.slice(2..);
+        assert_eq!(from.tokens(), &[3, 4, 5]);
+
+        let to = slice.slice(..3);
+        assert_eq!(to.tokens(), &[1, 2, 3]);
+    }
+}

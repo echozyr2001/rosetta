@@ -334,3 +334,87 @@ where
         parse_blocks(input).map(|(rest, blocks)| (rest, Document { blocks }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::Position;
+    use crate::lexer::token::{
+        AtxHeadingToken, BlockQuoteToken, CodeBlockToken, ListKind as LexerListKind,
+        ListMarkerToken, TextToken, ThematicBreakToken,
+    };
+    use crate::parser::ast::Block;
+
+    fn make_slice<'a>(tokens: &'a [Token<'static>]) -> TokenSlice<'a, Token<'static>> {
+        TokenSlice::new(tokens)
+    }
+
+    #[test]
+    fn parse_rule_handles_basic_blocks() {
+        let tokens = vec![
+            Token::AtxHeading(AtxHeadingToken {
+                level: 1,
+                marker_count: 1,
+                leading_whitespace: 0,
+                raw_marker: "#",
+                raw_content: "Title",
+                closing_sequence: "",
+                position: Position::default(),
+            }),
+            Token::ThematicBreak(ThematicBreakToken {
+                marker_char: '-',
+                marker_count: 3,
+                leading_whitespace: 0,
+                position: Position::default(),
+            }),
+            Token::CodeBlock(CodeBlockToken {
+                fence_char: Some('`'),
+                fence_length: Some(3),
+                info_string: Some("rust"),
+                closing_fence_length: Some(3),
+                raw_content: "fn main() {}",
+                indent_width: 0,
+                contains_tab: false,
+                position: Position::default(),
+            }),
+            Token::BlockQuote(BlockQuoteToken {
+                depth: 1,
+                marker_offset: 0,
+                spaces_after_marker: 1,
+                position: Position::default(),
+            }),
+            Token::ListMarker(ListMarkerToken {
+                marker: LexerListKind::Bullet { marker: '-' },
+                marker_offset: 0,
+                spaces_after_marker: 1,
+                ordinal_span: None,
+                position: Position::default(),
+            }),
+            Token::Text(TextToken {
+                lexeme: "Paragraph text",
+                position: Position::default(),
+            }),
+            Token::Eof,
+        ];
+
+        let rule = MarkdownParseRule;
+        let (_rest, document) = rule
+            .parse(make_slice(&tokens))
+            .expect("rule should parse token sequence");
+
+        assert!(document.blocks.len() >= 5);
+        assert!(matches!(document.blocks[0], Block::Heading { .. }));
+        assert!(matches!(document.blocks[1], Block::ThematicBreak { .. }));
+        assert!(matches!(document.blocks[2], Block::CodeBlock { .. }));
+        assert!(matches!(document.blocks[3], Block::BlockQuote { .. }));
+        assert!(matches!(document.blocks[4], Block::List { .. }));
+    }
+
+    #[test]
+    fn parse_rule_requires_consumable_tokens() {
+        let tokens = vec![Token::Eof];
+        let rule = MarkdownParseRule;
+        let result = rule.parse(make_slice(&tokens));
+        assert!(result.is_ok(), "empty document with EOF should succeed");
+    }
+}
