@@ -10,11 +10,16 @@ use crate::parser::token_slice::TokenSlice;
 use crate::parser::traits::ParseRule;
 use nom::{Err as NomErr, error::ErrorKind as NomErrorKind};
 
-/// Outcome of a single `Parser::try_parse` attempt.
+/// Outcome of a single [`Parser::try_parse`] attempt.
 #[derive(Debug)]
 pub enum ParseAttempt {
-    /// Parser needs more tokens to make progress.
-    NeedMoreTokens,
+    /// Parser produced a document candidate but still expects more input.
+    Pending { document: Document, consumed: usize },
+    /// Parser could not make progress without additional tokens.
+    NeedMoreTokens {
+        consumed: usize,
+        must_end_with_eof: bool,
+    },
     /// Parsing completed successfully and produced a document.
     Complete(Document),
 }
@@ -41,8 +46,10 @@ impl ParserError {
 /// The parser is intentionally lightweight: it owns the token buffer, receives tokens from an
 /// external controller, and attempts to parse the accumulated input whenever `try_parse` is
 /// invoked. If the underlying rule needs additional tokens, the parser reports
-/// [`ParseAttempt::NeedMoreTokens`] without consuming the buffer. Once the rule succeeds and
-/// consumes the entire buffer, the parser returns the resulting [`Document`] and enters the
+/// [`ParseAttempt::NeedMoreTokens`] without consuming the buffer. When the rule can build a
+/// provisional document but still expects more input, it yields
+/// [`ParseAttempt::Pending`]. Only after the rule succeeds and an EOF token has been observed does
+/// the parser return the resulting [`Document`] via [`ParseAttempt::Complete`] and enter the
 /// finished state.
 pub struct Parser<'input, Rule>
 where
@@ -107,7 +114,10 @@ where
         let snapshot: TokenSlice<'_, Token<'input>> = self.buffer.snapshot();
 
         if snapshot.is_empty() {
-            return Ok(ParseAttempt::NeedMoreTokens);
+            return Ok(ParseAttempt::NeedMoreTokens {
+                consumed: 0,
+                must_end_with_eof: false,
+            });
         }
 
         let tokens = snapshot.tokens();
@@ -120,11 +130,11 @@ where
             Ok((rest, document)) => {
                 let remaining = rest.len();
                 let trailing_tokens = rest.tokens();
+                let consumed = initial_len.saturating_sub(remaining);
 
                 if trailing_tokens.is_empty() && !saw_eof {
                     // Parsed everything currently buffered but have not observed EOF yet.
-                    // Keep the buffer as-is so additional tokens can be appended and retried.
-                    return Ok(ParseAttempt::NeedMoreTokens);
+                    return Ok(ParseAttempt::Pending { document, consumed });
                 }
 
                 if trailing_tokens.iter().any(|tok| !tok.is_eof()) {
@@ -132,14 +142,24 @@ where
                 }
 
                 if !saw_eof {
-                    return Ok(ParseAttempt::NeedMoreTokens);
+                    if consumed > 0 {
+                        return Ok(ParseAttempt::Pending { document, consumed });
+                    }
+
+                    return Ok(ParseAttempt::NeedMoreTokens {
+                        consumed,
+                        must_end_with_eof: true,
+                    });
                 }
 
                 self.buffer.advance(initial_len);
                 self.finished = true;
                 Ok(ParseAttempt::Complete(document))
             }
-            Err(NomErr::Incomplete(_)) => Ok(ParseAttempt::NeedMoreTokens),
+            Err(NomErr::Incomplete(_)) => Ok(ParseAttempt::NeedMoreTokens {
+                consumed: 0,
+                must_end_with_eof: saw_eof,
+            }),
             Err(NomErr::Error(err)) | Err(NomErr::Failure(err)) => {
                 Err(ParserError::from_nom(err.code))
             }
@@ -166,10 +186,12 @@ mod tests {
         assert!(!first.is_eof());
         parser.push_token(first).unwrap();
 
-        assert!(
-            matches!(parser.try_parse().unwrap(), ParseAttempt::NeedMoreTokens),
-            "parser should request more tokens before EOF"
-        );
+        match parser.try_parse().unwrap() {
+            ParseAttempt::Pending { consumed, .. } => {
+                assert_eq!(consumed, 1, "parser should report consumed tokens");
+            }
+            other => panic!("expected pending state before EOF, got {other:?}"),
+        }
 
         let eof = lexer.next_token().expect("eof token");
         assert!(eof.is_eof());
@@ -180,7 +202,8 @@ mod tests {
                 assert_eq!(document.blocks.len(), 1);
                 assert!(matches!(document.blocks[0], Block::Heading { .. }));
             }
-            ParseAttempt::NeedMoreTokens => panic!("expected completion after EOF"),
+            ParseAttempt::Pending { .. } => panic!("unexpected pending state after EOF"),
+            ParseAttempt::NeedMoreTokens { .. } => panic!("expected completion after EOF"),
         }
     }
 

@@ -16,7 +16,12 @@ fn parse_document(input: &'static str) -> crate::parser::ast::Document {
         parser.push_token(token).expect("parser accepts token");
 
         match parser.try_parse().expect("parser attempt succeeds") {
-            ParseAttempt::NeedMoreTokens => {
+            ParseAttempt::Pending { .. } => {
+                if eof {
+                    panic!("parser pending after EOF");
+                }
+            }
+            ParseAttempt::NeedMoreTokens { .. } => {
                 if eof {
                     panic!("parser requested more tokens after EOF");
                 }
@@ -47,7 +52,12 @@ fn parse_document_with_chunk_size(input: &'static str, chunk_size: usize) -> Doc
             }
 
             match parser.try_parse().expect("parser attempt succeeds") {
-                ParseAttempt::NeedMoreTokens => {
+                ParseAttempt::Pending { .. } => {
+                    if eof {
+                        panic!("parser pending after EOF");
+                    }
+                }
+                ParseAttempt::NeedMoreTokens { .. } => {
                     if eof {
                         panic!("parser requested more tokens after EOF");
                     }
@@ -266,7 +276,7 @@ fn streaming_parser_requires_eof_before_completion() {
     parser.push_token(token).unwrap();
     assert!(matches!(
         parser.try_parse().unwrap(),
-        ParseAttempt::NeedMoreTokens
+        ParseAttempt::Pending { .. }
     ));
 
     let eof = lexer.next_token().expect("eof token");
