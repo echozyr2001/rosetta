@@ -24,8 +24,7 @@ pub trait CanProvideTokens: HasProvider {
 pub trait TokenProvider<Context>: IsProviderFor<TokenProviderComponent, Context> {
     type Token: LexToken;
 
-    #[allow(clippy::needless_lifetimes)]
-    fn current_token<'a>(context: &'a Context) -> Option<&'a Self::Token>;
+    fn current_token(context: &Context) -> Option<&Self::Token>;
     fn next_token(context: &mut Context) -> Result<Self::Token>;
     fn peek_token(context: &mut Context) -> Result<Self::Token>;
     fn current_position(context: &Context) -> Position;
@@ -64,8 +63,7 @@ where
 {
     type Token = <Component::Delegate as TokenProvider<Context>>::Token;
 
-    #[allow(clippy::needless_lifetimes)]
-    fn current_token<'a>(context: &'a Context) -> Option<&'a Self::Token> {
+    fn current_token(context: &Context) -> Option<&Self::Token> {
         <Component::Delegate as TokenProvider<Context>>::current_token(context)
     }
 
