@@ -1,159 +1,289 @@
-use super::config::ParserConfig;
-use crate::adapters::DefaultParsingContext;
-use crate::error::{ErrorHandler, Result};
-use crate::lexer::Position;
-use crate::traits::*;
+// use super::config::ParserConfig;
+// use crate::adapters::DefaultParsingContext;
+// use crate::error::{ErrorHandler, Result};
+// use crate::lexer::Position;
+// use crate::traits::*;
+use super::token_buffer::TokenBuffer;
+use crate::lexer::{LexToken, token::Token};
+use crate::parser::ast::Document;
+use crate::parser::token_slice::TokenSlice;
+use crate::parser::traits::ParseRule;
+use nom::{Err as NomErr, error::ErrorKind as NomErrorKind};
 
-/// Parser that uses component-oriented context principles.
-///
-/// This parser uses a two-phase approach:
-/// 1. Lexer → Token sequence
-/// 2. Parser → AST
-///
-/// **Benefits of this approach**:
-/// - ✅ Better position tracking
-/// - ✅ Reusable lexical analysis
-/// - ✅ Modular and testable via traits
-/// - ✅ Easy to extend and customize
-///
-/// **Architecture**:
-/// - Uses `DefaultParsingContext` which combines all component traits
-/// - Delegates to `token_pipeline` for actual parsing logic
-pub struct Parser<C> {
-    context: C,
+/// Outcome of a single `Parser::try_parse` attempt.
+#[derive(Debug)]
+pub enum ParseAttempt {
+    /// Parser needs more tokens to make progress.
+    NeedMoreTokens,
+    /// Parsing completed successfully and produced a document.
+    Complete(Document),
 }
 
-impl<'input> Parser<DefaultParsingContext<'input>> {
-    /// Creates a new parser instance with the given configuration.
-    pub fn new(input: &'input str, config: ParserConfig) -> Result<Self> {
-        let context = DefaultParsingContext::new(input, config)?;
-        Ok(Self { context })
-    }
+/// Errors that can occur while running the parser.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParserError {
+    /// Parsing finished already; pushing more tokens is not allowed.
+    AlreadyFinished,
+    /// `nom` reported a syntax error while parsing the buffered tokens.
+    NomError { kind: NomErrorKind },
+    /// The rule returned successfully but left trailing tokens unconsumed.
+    TrailingTokens { remaining: usize },
+}
 
-    /// Convenience helper that uses default parser configuration.
-    pub fn with_defaults(input: &'input str) -> Self {
-        Self::new(input, ParserConfig::default()).expect("Failed to create parser with defaults")
-    }
-
-    /// Creates a parser with a custom error handler.
-    pub fn with_error_handler(
-        input: &'input str,
-        config: ParserConfig,
-        _error_handler: Box<dyn ErrorHandler>,
-    ) -> Self {
-        // Note: Custom error handler support can be added to DefaultParsingContext
-        Self::new(input, config).expect("Failed to create parser with error handler")
+impl ParserError {
+    fn from_nom(kind: NomErrorKind) -> Self {
+        ParserError::NomError { kind }
     }
 }
 
-impl<C> Parser<C> {
-    /// Construct a parser from an explicit context.
-    pub fn from_context(context: C) -> Self {
-        Self { context }
-    }
-
-    /// Consume the parser and return the inner context.
-    pub fn into_context(self) -> C {
-        self.context
-    }
-}
-
-impl<'input, C> Parser<C>
+/// Streaming parser that consumes tokens from a [`TokenBuffer`] using a pluggable [`ParseRule`].
+///
+/// The parser is intentionally lightweight: it owns the token buffer, receives tokens from an
+/// external controller, and attempts to parse the accumulated input whenever `try_parse` is
+/// invoked. If the underlying rule needs additional tokens, the parser reports
+/// [`ParseAttempt::NeedMoreTokens`] without consuming the buffer. Once the rule succeeds and
+/// consumes the entire buffer, the parser returns the resulting [`Document`] and enters the
+/// finished state.
+pub struct Parser<'input, Rule>
 where
-    C: ParsingContext<
-            Token = crate::lexer::token::Token<'input>,
-            Document = crate::parser::ast::Document,
-        > + CanAccessParserConfig<Config = ParserConfig>,
+    Rule: for<'a> ParseRule<'a, Token<'input>, Document>,
 {
-    /// Returns the current position in the input.
-    pub fn position(&self) -> Position {
-        self.context.current_position()
+    buffer: TokenBuffer<Token<'input>>,
+    rule: Rule,
+    finished: bool,
+}
+
+impl<'input, Rule> Parser<'input, Rule>
+where
+    Rule: for<'a> ParseRule<'a, Token<'input>, Document>,
+{
+    /// Creates a new parser with the provided rule.
+    pub fn new(rule: Rule) -> Self {
+        Self {
+            buffer: TokenBuffer::new(),
+            rule,
+            finished: false,
+        }
     }
 
-    /// Returns a reference to the collected reference definitions.
-    pub fn reference_definitions(
-        &self,
-    ) -> &std::collections::HashMap<String, crate::parser::ast::LinkReference> {
-        // Return empty map for now - can be extended later
-        static EMPTY_MAP: std::sync::LazyLock<
-            std::collections::HashMap<String, crate::parser::ast::LinkReference>,
-        > = std::sync::LazyLock::new(std::collections::HashMap::new);
-        &EMPTY_MAP
+    /// Returns true once the parser has produced a document successfully.
+    pub fn is_finished(&self) -> bool {
+        self.finished
     }
 
-    /// Parses the input into a `Document` AST using the configured context.
-    pub fn parse(mut self) -> Result<C::Document> {
-        crate::parser::token_pipeline::parse_document(&mut self.context)
+    /// Returns the number of buffered tokens still awaiting parsing.
+    pub fn buffered_len(&self) -> usize {
+        self.buffer.len()
     }
 
-    /// Returns a reference to the parser configuration.
-    pub fn config(&self) -> &ParserConfig {
-        self.context.parser_config()
+    /// Clears the internal buffer and resets the finished flag. This allows the parser to be
+    /// reused for a new document.
+    pub fn reset(&mut self) {
+        self.buffer.clear();
+        self.finished = false;
     }
 
-    /// Handle a parsing warning with the error handler
-    pub fn handle_parse_warning(&mut self, message: String, _input: &str) {
-        let error_info =
-            crate::error::ErrorInfo::new(crate::error::ErrorSeverity::Warning, message)
-                .with_position(self.position());
-
-        self.context.error_handler_mut().handle_error(&error_info);
+    /// Adds a token to the internal buffer. Returns an error if the parser has already completed
+    /// parsing a document.
+    pub fn push_token(&mut self, token: Token<'input>) -> Result<(), ParserError> {
+        if self.finished {
+            return Err(ParserError::AlreadyFinished);
+        }
+        self.buffer.push(token);
+        Ok(())
     }
 
-    /// Handle a parsing error with the error handler
-    pub fn handle_parse_error(&mut self, message: String, _input: &str) {
-        let error_info = crate::error::ErrorInfo::new(crate::error::ErrorSeverity::Error, message)
-            .with_position(self.position());
+    /// Attempts to parse the currently buffered tokens.
+    ///
+    /// - On success, returns [`ParseAttempt::Complete`] and marks the parser as finished.
+    /// - If the rule reports `Incomplete`, the parser keeps the buffer untouched and returns
+    ///   [`ParseAttempt::NeedMoreTokens`].
+    /// - On syntax errors, the buffer is left untouched and a [`ParserError`] is returned.
+    pub fn try_parse(&mut self) -> Result<ParseAttempt, ParserError> {
+        if self.finished {
+            return Err(ParserError::AlreadyFinished);
+        }
 
-        self.context.error_handler_mut().handle_error(&error_info);
+        let snapshot: TokenSlice<'_, Token<'input>> = self.buffer.snapshot();
+        let tokens = snapshot.tokens();
+        let saw_eof = tokens.iter().any(|tok| tok.is_eof());
+
+        if snapshot.is_empty() {
+            return Ok(ParseAttempt::NeedMoreTokens);
+        }
+
+        let initial_len = snapshot.len();
+        let parse_result = self.rule.parse(snapshot);
+
+        match parse_result {
+            Ok((rest, document)) => {
+                let remaining = rest.len();
+                let trailing_tokens = rest.tokens();
+
+                if trailing_tokens.iter().any(|tok| !tok.is_eof()) {
+                    return Err(ParserError::TrailingTokens { remaining });
+                }
+
+                if !saw_eof {
+                    return Ok(ParseAttempt::NeedMoreTokens);
+                }
+
+                self.buffer.advance(initial_len);
+                self.finished = true;
+                Ok(ParseAttempt::Complete(document))
+            }
+            Err(NomErr::Incomplete(_)) => Ok(ParseAttempt::NeedMoreTokens),
+            Err(NomErr::Error(err)) | Err(NomErr::Failure(err)) => {
+                Err(ParserError::from_nom(err.code))
+            }
+        }
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+// impl<Rule> Parser<Rule> {
+//     pub fn new(rules: Rule) -> Self {
+//         Self { rules }
+//     }
 
-    #[test]
-    fn test_parse_document() {
-        let input = "# Title\n\nThis is a paragraph";
-        let parser = Parser::with_defaults(input);
-        let result = parser.parse();
-        assert!(
-            result.is_ok(),
-            "Failed to parse document: {:?}",
-            result.err()
-        );
+//     pub fn parse(
+//         self,
+//         input: TokenSlice<'a, Token<'a>>,
+//     ) -> IResult<TokenSlice<'a, Token<'a>>, Document> {
+//         self.rules.parse(input)
+//     }
+// }
 
-        let document = result.unwrap();
-        assert!(!document.blocks.is_empty(), "Document should have blocks");
-    }
+// impl<'input> Parser<DefaultParsingContext<'input>> {
+//     /// Creates a new parser instance with the given configuration.
+//     pub fn new(input: &'input str, config: ParserConfig) -> Result<Self> {
+//         let context = DefaultParsingContext::new(input, config)?;
+//         Ok(Self { context })
+//     }
 
-    #[test]
-    fn test_error_handler_usage() {
-        use crate::error::DefaultErrorHandler;
+//     /// Convenience helper that uses default parser configuration.
+//     pub fn with_defaults(input: &'input str) -> Self {
+//         Self::new(input, ParserConfig::default()).expect("Failed to create parser with defaults")
+//     }
 
-        // Test with a custom error handler
-        let error_handler = DefaultErrorHandler::new();
-        let config = ParserConfig::default();
+//     /// Creates a parser with a custom error handler.
+//     pub fn with_error_handler(
+//         input: &'input str,
+//         config: ParserConfig,
+//         _error_handler: Box<dyn ErrorHandler>,
+//     ) -> Self {
+//         // Note: Custom error handler support can be added to DefaultParsingContext
+//         Self::new(input, config).expect("Failed to create parser with error handler")
+//     }
+// }
 
-        // Create a parser with the custom error handler
-        let parser = Parser::with_error_handler(
-            "# Valid heading\n\nSome content",
-            config,
-            Box::new(error_handler),
-        );
+// impl<C> Parser<C> {
+//     /// Construct a parser from an explicit context.
+//     pub fn from_context(context: C) -> Self {
+//         Self { context }
+//     }
 
-        let result = parser.parse();
-        assert!(result.is_ok());
-    }
+//     /// Consume the parser and return the inner context.
+//     pub fn into_context(self) -> C {
+//         self.context
+//     }
+// }
 
-    #[test]
-    fn test_position_information_in_parsed_ast() {
-        let input = "# First Heading\n\nSome paragraph text\n\n## Second Heading";
-        let parser = Parser::with_defaults(input);
-        let document = parser.parse().unwrap();
+// impl<'input, C> Parser<C>
+// where
+//     C: ParsingContext<
+//             Token = crate::lexer::token::Token<'input>,
+//             Document = crate::parser::ast::Document,
+//         > + CanAccessParserConfig<Config = ParserConfig>,
+// {
+//     /// Returns the current position in the input.
+//     pub fn position(&self) -> Position {
+//         self.context.current_position()
+//     }
 
-        // Check that blocks are parsed correctly
-        assert!(!document.blocks.is_empty(), "Document should have blocks");
-    }
-}
+//     /// Returns a reference to the collected reference definitions.
+//     pub fn reference_definitions(
+//         &self,
+//     ) -> &std::collections::HashMap<String, crate::parser::ast::LinkReference> {
+//         // Return empty map for now - can be extended later
+//         static EMPTY_MAP: std::sync::LazyLock<
+//             std::collections::HashMap<String, crate::parser::ast::LinkReference>,
+//         > = std::sync::LazyLock::new(std::collections::HashMap::new);
+//         &EMPTY_MAP
+//     }
+
+//     /// Parses the input into a `Document` AST using the configured context.
+//     pub fn parse(mut self) -> Result<C::Document> {
+//         crate::parser::token_pipeline::parse_document(&mut self.context)
+//     }
+
+//     /// Returns a reference to the parser configuration.
+//     pub fn config(&self) -> &ParserConfig {
+//         self.context.parser_config()
+//     }
+
+//     /// Handle a parsing warning with the error handler
+//     pub fn handle_parse_warning(&mut self, message: String, _input: &str) {
+//         let error_info =
+//             crate::error::ErrorInfo::new(crate::error::ErrorSeverity::Warning, message)
+//                 .with_position(self.position());
+
+//         self.context.error_handler_mut().handle_error(&error_info);
+//     }
+
+//     /// Handle a parsing error with the error handler
+//     pub fn handle_parse_error(&mut self, message: String, _input: &str) {
+//         let error_info = crate::error::ErrorInfo::new(crate::error::ErrorSeverity::Error, message)
+//             .with_position(self.position());
+
+//         self.context.error_handler_mut().handle_error(&error_info);
+//     }
+// }
+
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+
+//     #[test]
+//     fn test_parse_document() {
+//         let input = "# Title\n\nThis is a paragraph";
+//         let parser = Parser::with_defaults(input);
+//         let result = parser.parse();
+//         assert!(
+//             result.is_ok(),
+//             "Failed to parse document: {:?}",
+//             result.err()
+//         );
+
+//         let document = result.unwrap();
+//         assert!(!document.blocks.is_empty(), "Document should have blocks");
+//     }
+
+//     #[test]
+//     fn test_error_handler_usage() {
+//         use crate::error::DefaultErrorHandler;
+
+//         // Test with a custom error handler
+//         let error_handler = DefaultErrorHandler::new();
+//         let config = ParserConfig::default();
+
+//         // Create a parser with the custom error handler
+//         let parser = Parser::with_error_handler(
+//             "# Valid heading\n\nSome content",
+//             config,
+//             Box::new(error_handler),
+//         );
+
+//         let result = parser.parse();
+//         assert!(result.is_ok());
+//     }
+
+//     #[test]
+//     fn test_position_information_in_parsed_ast() {
+//         let input = "# First Heading\n\nSome paragraph text\n\n## Second Heading";
+//         let parser = Parser::with_defaults(input);
+//         let document = parser.parse().unwrap();
+
+//         // Check that blocks are parsed correctly
+//         assert!(!document.blocks.is_empty(), "Document should have blocks");
+//     }
+// }
