@@ -1,8 +1,6 @@
-use crate::lexer::token::{
-    BlockQuoteToken, CodeBlockToken, ListKind as LexerListKind, ListMarkerToken, TextToken,
-    ThematicBreakToken, Token,
-};
+use crate::lexer::token::{CodeBlockToken, ListKind as LexerListKind, ThematicBreakToken, Token};
 use crate::parser::ast::{Block, Document, Inline, ListItem, ListKind};
+use crate::parser::inline;
 use crate::parser::token_slice::TokenSlice;
 use crate::parser::traits::ParseRule;
 use nom::{Err as NomErr, IResult, error::ErrorKind};
@@ -61,13 +59,11 @@ where
     match input.first() {
         Some(Token::AtxHeading(token)) => {
             let rest = advance(input, 1);
-            let text = token.raw_content.trim().to_string();
-            let inline = Inline::Text(text);
             Ok((
                 rest,
                 Block::Heading {
                     level: token.level,
-                    content: vec![inline],
+                    content: inline::parse_inlines_from_text(token.raw_content.trim()),
                     id: None,
                     position: Some(token.position),
                 },
@@ -86,12 +82,11 @@ where
     match input.first() {
         Some(Token::SetextHeading(token)) => {
             let rest = advance(input, 1);
-            let inline = Inline::Text(token.raw_underline.trim().to_string());
             Ok((
                 rest,
                 Block::Heading {
                     level: token.level,
-                    content: vec![inline],
+                    content: inline::parse_inlines_from_text(token.raw_underline.trim()),
                     id: None,
                     position: Some(token.position),
                 },
@@ -139,19 +134,74 @@ fn parse_blockquote_block<'slice, 'input>(
 where
     'input: 'slice,
 {
-    match input.first() {
-        Some(Token::BlockQuote(BlockQuoteToken { position, .. })) => {
-            let rest = advance(input, 1);
-            Ok((
-                rest,
-                Block::BlockQuote {
-                    content: vec![],
-                    position: Some(*position),
-                },
-            ))
+    let tokens = input.tokens();
+    let Some(Token::BlockQuote(first_marker)) = tokens.first() else {
+        return Err(nom_error(input));
+    };
+
+    let mut position = Some(first_marker.position);
+    let mut body: Vec<Token<'input>> = Vec::new();
+    let mut idx = 0usize;
+
+    while idx < tokens.len() {
+        match &tokens[idx] {
+            Token::BlockQuote(marker) => {
+                if position.is_none() {
+                    position = Some(marker.position);
+                }
+                idx += 1;
+
+                if idx < tokens.len()
+                    && matches!(
+                        tokens[idx],
+                        Token::Whitespace(_) | Token::Indent(_) | Token::SoftBreak(_)
+                    )
+                {
+                    idx += 1;
+                }
+
+                let line_start = idx;
+                while idx < tokens.len()
+                    && !matches!(tokens[idx], Token::LineEnding(_) | Token::Eof)
+                {
+                    idx += 1;
+                }
+
+                body.extend_from_slice(&tokens[line_start..idx]);
+
+                if idx < tokens.len() {
+                    if let Token::LineEnding(_) = &tokens[idx] {
+                        body.push(tokens[idx].clone());
+                        idx += 1;
+
+                        if idx < tokens.len() && !matches!(tokens[idx], Token::BlockQuote(_)) {
+                            break;
+                        }
+                        continue;
+                    }
+
+                    if let Token::Eof = tokens[idx] {
+                        break;
+                    }
+                }
+            }
+            _ => break,
         }
-        _ => Err(nom_error(input)),
     }
+
+    let rest = TokenSlice::new(&tokens[idx..]);
+
+    let child_slice = TokenSlice::new(body.as_slice());
+    let content = if child_slice.is_empty() {
+        Vec::new()
+    } else {
+        match parse_blocks(child_slice) {
+            Ok((remaining, parsed)) if remaining.is_empty() => parsed,
+            _ => return Err(nom_error(input)),
+        }
+    };
+
+    Ok((rest, Block::BlockQuote { content, position }))
 }
 
 fn map_list_kind(kind: &LexerListKind) -> ListKind {
@@ -170,25 +220,136 @@ fn parse_list_block<'slice, 'input>(
 where
     'input: 'slice,
 {
-    match input.first() {
-        Some(Token::ListMarker(ListMarkerToken {
-            marker, position, ..
-        })) => {
-            let rest = advance(input, 1);
-            let block = Block::List {
-                kind: map_list_kind(marker),
-                tight: true,
-                items: vec![ListItem {
-                    content: vec![],
-                    tight: true,
-                    task_list_marker: None,
-                }],
-                position: Some(*position),
-            };
-            Ok((rest, block))
+    let tokens = input.tokens();
+    let Some(Token::ListMarker(first_marker)) = tokens.first() else {
+        return Err(nom_error(input));
+    };
+
+    let mut items = Vec::new();
+    let mut idx = 0usize;
+    let mut list_tight = true;
+    let mut position = Some(first_marker.position);
+    let list_kind = map_list_kind(&first_marker.marker);
+
+    while idx < tokens.len() {
+        let marker_token = match &tokens[idx] {
+            Token::ListMarker(marker) if map_list_kind(&marker.marker) == list_kind => marker,
+            Token::LineEnding(_) => {
+                idx += 1;
+                continue;
+            }
+            _ => break,
+        };
+
+        if position.is_none() {
+            position = Some(marker_token.position);
         }
-        _ => Err(nom_error(input)),
+
+        idx += 1;
+
+        while idx < tokens.len() && matches!(tokens[idx], Token::Whitespace(_) | Token::Indent(_)) {
+            idx += 1;
+        }
+
+        let mut item_tokens = Vec::new();
+        let mut saw_blank_line = false;
+        let mut end_list = false;
+
+        while idx < tokens.len() {
+            if matches!(tokens.get(idx), Some(Token::Eof)) {
+                idx = tokens.len();
+                break;
+            }
+
+            match &tokens[idx] {
+                Token::LineEnding(_) => {
+                    item_tokens.push(tokens[idx].clone());
+
+                    let mut lookahead_idx = idx + 1;
+                    let mut blank_line = false;
+
+                    while lookahead_idx < tokens.len()
+                        && matches!(
+                            tokens[lookahead_idx],
+                            Token::Whitespace(_) | Token::LineEnding(_)
+                        )
+                    {
+                        if let Token::LineEnding(_) = &tokens[lookahead_idx] {
+                            blank_line = true;
+                        }
+                        item_tokens.push(tokens[lookahead_idx].clone());
+                        lookahead_idx += 1;
+                    }
+
+                    if blank_line {
+                        saw_blank_line = true;
+                        list_tight = false;
+
+                        match tokens.get(lookahead_idx) {
+                            Some(Token::ListMarker(next_marker))
+                                if map_list_kind(&next_marker.marker) == list_kind =>
+                            {
+                                idx = lookahead_idx;
+                                break;
+                            }
+                            Some(Token::Indent(_)) => {
+                                idx = lookahead_idx;
+                                continue;
+                            }
+                            _ => {
+                                idx = lookahead_idx;
+                                end_list = true;
+                                break;
+                            }
+                        }
+                    } else {
+                        idx = lookahead_idx;
+                    }
+                    continue;
+                }
+                _ => {
+                    item_tokens.push(tokens[idx].clone());
+                    idx += 1;
+                }
+            }
+        }
+
+        let child_slice = TokenSlice::new(item_tokens.as_slice());
+        let content = if child_slice.is_empty() {
+            Vec::new()
+        } else {
+            match parse_blocks(child_slice) {
+                Ok((remaining, blocks)) if remaining.is_empty() => blocks,
+                _ => return Err(nom_error(input)),
+            }
+        };
+
+        items.push(ListItem {
+            content,
+            tight: !saw_blank_line,
+            task_list_marker: None,
+        });
+
+        if end_list {
+            break;
+        }
     }
+
+    if items.is_empty() {
+        return Err(nom_error(input));
+    }
+
+    let rest = TokenSlice::new(&tokens[idx..]);
+
+    Ok((
+        rest,
+        Block::List {
+            kind: list_kind,
+            tight: list_tight,
+            items,
+            position,
+        },
+    ))
 }
 
 fn parse_thematic_break_block<'slice, 'input>(
@@ -223,52 +384,178 @@ where
     }
 
     let mut idx = 0;
-    let mut text = String::new();
     let mut position = None;
-    let mut found_text = false;
+    let mut found_content = false;
+    let mut text_buffer = String::new();
+    let mut inlines: Vec<Inline> = Vec::new();
 
     while idx < tokens.len() {
         match &tokens[idx] {
-            Token::Text(TextToken {
-                lexeme,
-                position: pos,
-            }) => {
+            Token::Text(token) => {
                 if position.is_none() {
-                    position = Some(*pos);
+                    position = Some(token.position);
                 }
-                text.push_str(lexeme);
-                found_text = true;
+                text_buffer.push_str(token.lexeme);
+                found_content = true;
                 idx += 1;
             }
             Token::Whitespace(token) => {
-                if found_text {
-                    text.push_str(token.lexeme);
+                if found_content {
+                    text_buffer.push_str(token.lexeme);
                 }
                 idx += 1;
             }
-            Token::LineEnding(_) | Token::SoftBreak(_) => {
-                if found_text {
-                    text.push('\n');
+            Token::Indent(token) => {
+                if found_content {
+                    for _ in 0..token.visual_width {
+                        text_buffer.push(' ');
+                    }
                 }
                 idx += 1;
             }
-            Token::HardBreak(_) => {
-                if found_text {
-                    text.push_str("\\n");
+            Token::EscapeSequence(token) => {
+                if position.is_none() {
+                    position = Some(token.position);
                 }
+                text_buffer.push(token.escaped);
+                found_content = true;
                 idx += 1;
             }
-            Token::Indent(_) => {
-                if found_text {
-                    text.push_str("    ");
+            Token::Entity(token) => {
+                if position.is_none() {
+                    position = Some(token.position);
                 }
+                if let Some(resolved) = token.resolved {
+                    text_buffer.push(resolved);
+                } else {
+                    text_buffer.push('&');
+                    text_buffer.push_str(token.raw);
+                }
+                found_content = true;
                 idx += 1;
             }
+            Token::Punctuation(token) => {
+                if position.is_none() {
+                    position = Some(token.position);
+                }
+                text_buffer.push(token.ch);
+                found_content = true;
+                idx += 1;
+            }
+            Token::EmphasisDelimiter(token) => {
+                if position.is_none() {
+                    position = Some(token.position);
+                }
+                for _ in 0..token.run_length {
+                    text_buffer.push(token.marker);
+                }
+                found_content = true;
+                idx += 1;
+            }
+            Token::CodeSpanDelimiter(token) => {
+                if position.is_none() {
+                    position = Some(token.position);
+                }
+                for _ in 0..token.backtick_count {
+                    text_buffer.push('`');
+                }
+                found_content = true;
+                idx += 1;
+            }
+            Token::CodeSpan(token) => {
+                if position.is_none() {
+                    position = Some(token.position);
+                }
+                if !text_buffer.is_empty() {
+                    inlines.extend(inline::parse_inlines_from_text(&text_buffer));
+                    text_buffer.clear();
+                }
+                inlines.push(Inline::Code(token.content.to_string()));
+                found_content = true;
+                idx += 1;
+            }
+            Token::HtmlInline(token) => {
+                if position.is_none() {
+                    position = Some(token.position);
+                }
+                if !text_buffer.is_empty() {
+                    inlines.extend(inline::parse_inlines_from_text(&text_buffer));
+                    text_buffer.clear();
+                }
+                inlines.push(Inline::HtmlInline(token.raw.to_string()));
+                found_content = true;
+                idx += 1;
+            }
+            Token::Autolink(token) => {
+                if position.is_none() {
+                    position = Some(token.position);
+                }
+                if !text_buffer.is_empty() {
+                    inlines.extend(inline::parse_inlines_from_text(&text_buffer));
+                    text_buffer.clear();
+                }
+                let text = Inline::Text(token.lexeme.to_string());
+                inlines.push(Inline::Link {
+                    text: vec![text],
+                    destination: token.lexeme.to_string(),
+                    title: None,
+                });
+                found_content = true;
+                idx += 1;
+            }
+            Token::LineEnding(token) => {
+                if !found_content {
+                    break;
+                }
+                if position.is_none() {
+                    position = Some(token.position);
+                }
+                if !text_buffer.is_empty() {
+                    inlines.extend(inline::parse_inlines_from_text(&text_buffer));
+                    text_buffer.clear();
+                }
+                inlines.push(Inline::SoftBreak);
+                idx += 1;
+            }
+            Token::SoftBreak(token) => {
+                if !found_content {
+                    break;
+                }
+                if position.is_none() {
+                    position = Some(token.position);
+                }
+                if !text_buffer.is_empty() {
+                    inlines.extend(inline::parse_inlines_from_text(&text_buffer));
+                    text_buffer.clear();
+                }
+                inlines.push(Inline::SoftBreak);
+                idx += 1;
+            }
+            Token::HardBreak(token) => {
+                if !found_content {
+                    break;
+                }
+                if position.is_none() {
+                    position = Some(token.position);
+                }
+                if !text_buffer.is_empty() {
+                    inlines.extend(inline::parse_inlines_from_text(&text_buffer));
+                    text_buffer.clear();
+                }
+                inlines.push(Inline::HardBreak);
+                idx += 1;
+            }
+            Token::Eof => break,
             _ => break,
         }
     }
 
-    if !found_text {
+    if !text_buffer.is_empty() {
+        inlines.extend(inline::parse_inlines_from_text(&text_buffer));
+        text_buffer.clear();
+    }
+
+    if !found_content && inlines.is_empty() {
         return Err(nom_error(input));
     }
 
@@ -276,7 +563,7 @@ where
     Ok((
         rest,
         Block::Paragraph {
-            content: vec![Inline::Text(text)],
+            content: inlines,
             position,
         },
     ))
@@ -402,12 +689,18 @@ mod tests {
             .parse(make_slice(&tokens))
             .expect("rule should parse token sequence");
 
-        assert!(document.blocks.len() >= 5);
+        assert!(document.blocks.len() >= 4);
         assert!(matches!(document.blocks[0], Block::Heading { .. }));
         assert!(matches!(document.blocks[1], Block::ThematicBreak { .. }));
         assert!(matches!(document.blocks[2], Block::CodeBlock { .. }));
         assert!(matches!(document.blocks[3], Block::BlockQuote { .. }));
-        assert!(matches!(document.blocks[4], Block::List { .. }));
+
+        if let Block::BlockQuote { content, .. } = &document.blocks[3] {
+            assert_eq!(content.len(), 1);
+            assert!(matches!(content[0], Block::List { .. }));
+        } else {
+            panic!("expected blockquote with nested list");
+        }
     }
 
     #[test]

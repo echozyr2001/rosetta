@@ -9,6 +9,7 @@
 
 pub mod ast;
 pub mod core;
+pub(crate) mod inline;
 pub mod rules;
 mod token_buffer;
 pub mod token_slice;
