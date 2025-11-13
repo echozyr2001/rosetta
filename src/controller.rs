@@ -62,46 +62,22 @@ where
     {
         loop {
             let attempt = self.parser.try_parse().map_err(ControllerError::Parser)?;
-
-            let mut should_fetch_token = false;
-
             match attempt {
                 ParseAttempt::Complete(document) => return Ok(document),
                 ParseAttempt::Pending { document, .. } => {
                     on_pending(&document);
                     self.last_pending = Some(document);
-                    should_fetch_token = true;
+                    self.pull_next_token()?;
                 }
                 ParseAttempt::NeedMoreTokens {
                     must_end_with_eof, ..
                 } => {
                     if must_end_with_eof {
-                        if self.eof_sent {
-                            return Err(ControllerError::UnexpectedState(
-                                "parser requested EOF after EOF was already sent",
-                            ));
-                        }
-
-                        self.parser
-                            .push_token(Token::Eof)
-                            .map_err(ControllerError::Parser)?;
-                        self.eof_sent = true;
-                        continue;
+                        self.inject_eof()?;
                     } else {
-                        should_fetch_token = true;
+                        self.pull_next_token()?;
                     }
                 }
-            }
-
-            if should_fetch_token {
-                let token = self
-                    .lexer
-                    .next_token()
-                    .ok_or(ControllerError::LexerExhausted)?;
-                self.eof_sent |= token.is_eof();
-                self.parser
-                    .push_token(token)
-                    .map_err(ControllerError::Parser)?;
             }
         }
     }
@@ -109,6 +85,37 @@ where
     /// Convenience helper for callers who are not interested in intermediate documents.
     pub fn parse(self) -> Result<Document, ControllerError> {
         self.parse_with_listener(|_| {})
+    }
+}
+
+impl<'input, Rule> ParserController<'input, Rule>
+where
+    Rule: for<'a> ParseRule<'a, Token<'input>, Document>,
+{
+    fn pull_next_token(&mut self) -> Result<(), ControllerError> {
+        let token = self
+            .lexer
+            .next_token()
+            .ok_or(ControllerError::LexerExhausted)?;
+        self.eof_sent |= token.is_eof();
+        self.parser
+            .push_token(token)
+            .map_err(ControllerError::Parser)?;
+        Ok(())
+    }
+
+    fn inject_eof(&mut self) -> Result<(), ControllerError> {
+        if self.eof_sent {
+            return Err(ControllerError::UnexpectedState(
+                "parser requested EOF after EOF was already sent",
+            ));
+        }
+
+        self.parser
+            .push_token(Token::Eof)
+            .map_err(ControllerError::Parser)?;
+        self.eof_sent = true;
+        Ok(())
     }
 }
 

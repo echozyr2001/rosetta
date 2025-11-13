@@ -91,6 +91,50 @@ fn parses_heading_and_paragraph() {
 }
 
 #[test]
+fn parses_inline_code_and_emphasis() {
+    let doc = parse_document("This has `code` and *emphasis*.");
+
+    match &doc.blocks[0] {
+        Block::Paragraph { content, .. } => {
+            assert!(
+                content
+                    .iter()
+                    .any(|inline| matches!(inline, Inline::Code(code) if code == "code")),
+                "expected Inline::Code for `code` span"
+            );
+            assert!(
+                content
+                    .iter()
+                    .any(|inline| matches!(inline, Inline::Emphasis { strong: false, .. })),
+                "expected Inline::Emphasis for *emphasis*"
+            );
+        }
+        other => panic!("expected paragraph, found {other:?}"),
+    }
+}
+
+#[test]
+fn parses_autolinks_into_links() {
+    let doc = parse_document("Visit <https://example.com> now.");
+
+    match &doc.blocks[0] {
+        Block::Paragraph { content, .. } => {
+            assert!(
+                content.iter().any(|inline| matches!(
+                    inline,
+                    Inline::Link {
+                        destination,
+                        ..
+                    } if destination == "https://example.com"
+                )),
+                "expected Inline::Link for autolink"
+            );
+        }
+        other => panic!("expected paragraph, found {other:?}"),
+    }
+}
+
+#[test]
 fn parses_multiple_headings() {
     let doc = parse_document("# Level 1\n## Level 2\n### Level 3");
     assert_eq!(doc.blocks.len(), 3);
