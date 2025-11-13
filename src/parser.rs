@@ -8,11 +8,11 @@
 //! - `traits`: shared parser traits used by the rule implementations.
 
 pub mod ast;
-mod core;
-mod rules;
+pub mod core;
+pub mod rules;
 mod token_buffer;
-mod token_slice;
-mod traits;
+pub mod token_slice;
+pub mod traits;
 
 pub use core::{ParseAttempt, Parser, ParserError};
 pub use rules::MarkdownParseRule;

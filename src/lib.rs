@@ -3,8 +3,10 @@
 // pub mod codegen;
 // pub mod dom;
 // pub mod error;
+pub mod controller;
 pub mod lexer;
 pub mod parser;
+pub use controller::{ControllerError, ParserController};
 // pub mod performance;
 // pub mod traits;
 
