@@ -285,11 +285,18 @@ fn parses_unicode_heading() {
 #[test]
 fn parses_setext_heading() {
     let doc = parse_document("Heading text\n=====");
-    assert!(!doc.blocks.is_empty());
-    assert!(matches!(
-        &doc.blocks[0],
-        Block::Heading { .. } | Block::Paragraph { .. }
-    ));
+    match &doc.blocks[0] {
+        Block::Heading { content, .. } => {
+            assert!(
+                content.iter().any(|inline| matches!(
+                    inline,
+                    Inline::Text(text) if text == "Heading text"
+                )),
+                "expected heading content to match original text"
+            );
+        }
+        other => panic!("expected heading, found {other:?}"),
+    }
 }
 
 #[test]

@@ -321,7 +321,82 @@ impl<'input> LexingRule<'input, Token<'input>> for MarkdownRules {
                 return Some(Self::add_position(token, start_position));
             }
 
-            if let Ok((remaining, token)) = parse_setext_heading(current) {
+            if let Ok((remaining, mut token)) = parse_setext_heading(current) {
+                // Extract the previous line's content for Setext heading
+                let current_offset = cursor.byte_offset();
+                if current_offset > 0 {
+                    // Find the start of the previous line by going backwards
+                    // First, skip any whitespace at the start of current line
+                    let mut pos = current_offset;
+
+                    // Go back to find the newline that ends the previous line
+                    let mut found_newline = false;
+                    while pos > 0 {
+                        pos -= 1;
+                        let ch = cursor.input().as_bytes()[pos] as char;
+                        if ch == '\n' || ch == '\r' {
+                            found_newline = true;
+                            // Handle \r\n
+                            if ch == '\n'
+                                && pos > 0
+                                && cursor.input().as_bytes()[pos - 1] as char == '\r'
+                            {
+                                pos -= 1;
+                            }
+                            break;
+                        }
+                    }
+
+                    if found_newline {
+                        // Now find the start of the previous line
+                        let line_end = pos;
+                        let mut line_start = line_end;
+                        while line_start > 0 {
+                            let ch = cursor.input().as_bytes()[line_start - 1] as char;
+                            if ch == '\n' || ch == '\r' {
+                                break;
+                            }
+                            line_start -= 1;
+                        }
+
+                        // Handle \r\n at line start
+                        if line_start > 0
+                            && cursor.input().as_bytes()[line_start] as char == '\r'
+                            && line_start + 1 < cursor.input().len()
+                            && cursor.input().as_bytes()[line_start + 1] as char == '\n'
+                        {
+                            line_start += 2;
+                        } else if line_start < cursor.input().len()
+                            && (cursor.input().as_bytes()[line_start] as char == '\n'
+                                || cursor.input().as_bytes()[line_start] as char == '\r')
+                        {
+                            line_start += 1;
+                        }
+
+                        if line_end > line_start {
+                            let previous_line = &cursor.input()[line_start..line_end];
+                            // Update the token with the previous line's content
+                            if let Token::SetextHeading(ref t) = token {
+                                let marker_char = t.marker_char;
+                                let level = t.level;
+                                let marker_count = t.marker_count;
+                                let leading_whitespace = t.leading_whitespace;
+                                let raw_underline = t.raw_underline;
+
+                                token = Token::SetextHeading(SetextHeadingToken {
+                                    level,
+                                    marker_char,
+                                    marker_count,
+                                    leading_whitespace,
+                                    raw_underline,
+                                    raw_content: previous_line.trim(),
+                                    position: t.position,
+                                });
+                            }
+                        }
+                    }
+                }
+
                 let consumed = current.len() - remaining.len();
                 cursor.advance(consumed);
                 return Some(Self::add_position(token, start_position));
