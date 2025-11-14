@@ -86,7 +86,7 @@ where
                 rest,
                 Block::Heading {
                     level: token.level,
-                    content: inline::parse_inlines_from_text(token.raw_underline.trim()),
+                    content: inline::parse_inlines_from_text(token.raw_content),
                     id: None,
                     position: Some(token.position),
                 },
@@ -560,6 +560,22 @@ where
     }
 
     let rest = advance(input, idx);
+
+    // Check if the next token is a SetextHeadingToken
+    // If so, convert this paragraph to a heading using the content from the token
+    if let Some(Token::SetextHeading(token)) = rest.first() {
+        // Use the raw_content from the SetextHeadingToken which was extracted by Lexer
+        return Ok((
+            advance(rest, 1),
+            Block::Heading {
+                level: token.level,
+                content: inline::parse_inlines_from_text(token.raw_content),
+                id: None,
+                position,
+            },
+        ));
+    }
+
     Ok((
         rest,
         Block::Paragraph {

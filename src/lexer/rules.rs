@@ -214,6 +214,7 @@ pub(super) fn parse_setext_heading(input: &str) -> IResult<&str, Token<'_>> {
                 marker_count,
                 leading_whitespace: 0,
                 raw_underline: matched,
+                raw_content: "", // Will be filled in by Lexer when it has context
                 position: Position::default(),
             })
         },

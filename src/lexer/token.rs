@@ -83,6 +83,8 @@ pub struct SetextHeadingToken<'input> {
     pub marker_count: usize,
     pub leading_whitespace: usize,
     pub raw_underline: &'input str,
+    /// The text content of the heading (from the previous line).
+    pub raw_content: &'input str,
     pub position: crate::lexer::Position,
 }
 
