@@ -328,7 +328,7 @@ impl<'input> LexingRule<'input, Token<'input>> for MarkdownRules {
                     // Find the start of the previous line by going backwards
                     // First, skip any whitespace at the start of current line
                     let mut pos = current_offset;
-                    
+
                     // Go back to find the newline that ends the previous line
                     let mut found_newline = false;
                     while pos > 0 {
@@ -337,7 +337,8 @@ impl<'input> LexingRule<'input, Token<'input>> for MarkdownRules {
                         if ch == '\n' || ch == '\r' {
                             found_newline = true;
                             // Handle \r\n
-                            if ch == '\n' && pos > 0
+                            if ch == '\n'
+                                && pos > 0
                                 && cursor.input().as_bytes()[pos - 1] as char == '\r'
                             {
                                 pos -= 1;
@@ -345,7 +346,7 @@ impl<'input> LexingRule<'input, Token<'input>> for MarkdownRules {
                             break;
                         }
                     }
-                    
+
                     if found_newline {
                         // Now find the start of the previous line
                         let line_end = pos;
@@ -357,7 +358,7 @@ impl<'input> LexingRule<'input, Token<'input>> for MarkdownRules {
                             }
                             line_start -= 1;
                         }
-                        
+
                         // Handle \r\n at line start
                         if line_start > 0
                             && cursor.input().as_bytes()[line_start] as char == '\r'
@@ -371,7 +372,7 @@ impl<'input> LexingRule<'input, Token<'input>> for MarkdownRules {
                         {
                             line_start += 1;
                         }
-                        
+
                         if line_end > line_start {
                             let previous_line = &cursor.input()[line_start..line_end];
                             // Update the token with the previous line's content
@@ -381,7 +382,7 @@ impl<'input> LexingRule<'input, Token<'input>> for MarkdownRules {
                                 let marker_count = t.marker_count;
                                 let leading_whitespace = t.leading_whitespace;
                                 let raw_underline = t.raw_underline;
-                                
+
                                 token = Token::SetextHeading(SetextHeadingToken {
                                     level,
                                     marker_char,
@@ -395,7 +396,7 @@ impl<'input> LexingRule<'input, Token<'input>> for MarkdownRules {
                         }
                     }
                 }
-                
+
                 let consumed = current.len() - remaining.len();
                 cursor.advance(consumed);
                 return Some(Self::add_position(token, start_position));
