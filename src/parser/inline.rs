@@ -635,14 +635,6 @@ pub struct LinkReference {
     pub title: Option<String>,
 }
 
-/// Parses a raw inline string into `Inline` nodes.
-pub fn parse_inlines_from_text(text: &str) -> Vec<Inline> {
-    let mut result = Vec::new();
-    let empty_escaped = std::collections::HashSet::new();
-    parse_inlines_into(text, &mut result, &HashMap::new(), &empty_escaped);
-    result
-}
-
 /// Parses a raw inline string into `Inline` nodes with link references.
 pub fn parse_inlines_from_text_with_refs(
     text: &str,
