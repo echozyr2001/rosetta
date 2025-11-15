@@ -1,4 +1,5 @@
 use crate::parser::ast::Inline;
+use std::collections::HashMap;
 
 fn flush_text(buffer: &mut String, output: &mut Vec<Inline>) {
     if buffer.is_empty() {
@@ -50,6 +51,72 @@ fn find_char(chars: &[(usize, char)], mut start: usize, target: char) -> Option<
         start += 1;
     }
     None
+}
+
+fn parse_reference(text: &str, bracket_end_char: usize) -> Option<(usize, String)> {
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    if bracket_end_char + 1 >= chars.len() {
+        return None;
+    }
+
+    let mut idx = bracket_end_char + 1;
+
+    // Skip whitespace after ]
+    while idx < chars.len() {
+        let (_, ch) = chars[idx];
+        if ch != ' ' && ch != '\t' {
+            break;
+        }
+        idx += 1;
+    }
+
+    // Check for [ref] or [] (collapsed reference)
+    if idx < chars.len() && chars[idx].1 == '[' {
+        let mut bracket_depth = 1;
+        let mut search_idx = idx + 1;
+        let mut escaped = false;
+        let mut ref_label = String::new();
+
+        while search_idx < chars.len() {
+            let (_, ch) = chars[search_idx];
+            if escaped {
+                escaped = false;
+                ref_label.push(ch);
+                search_idx += 1;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                search_idx += 1;
+                continue;
+            }
+            if ch == '[' {
+                bracket_depth += 1;
+                ref_label.push(ch);
+            } else if ch == ']' {
+                bracket_depth -= 1;
+                if bracket_depth == 0 {
+                    // Found matching ]
+                    return Some((search_idx + 1, ref_label));
+                }
+                ref_label.push(ch);
+            } else {
+                ref_label.push(ch);
+            }
+            search_idx += 1;
+        }
+    }
+
+    None
+}
+
+fn normalize_link_label(label: &str) -> String {
+    // CommonMark spec: link labels are case-insensitive and collapse whitespace
+    label
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 fn is_autolink(candidate: &str) -> bool {
@@ -281,7 +348,11 @@ fn parse_inline_link(
     Some((idx + 1, destination, title))
 }
 
-fn parse_inlines_into(text: &str, output: &mut Vec<Inline>) {
+fn parse_inlines_into(
+    text: &str,
+    output: &mut Vec<Inline>,
+    link_refs: &HashMap<String, LinkReference>,
+) {
     if text.is_empty() {
         return;
     }
@@ -349,7 +420,22 @@ fn parse_inlines_into(text: &str, output: &mut Vec<Inline>) {
                                     continue;
                                 }
 
-                                // TODO: Handle reference-style images [ref]
+                                // Try reference-style image
+                                if let Some((end_idx, ref_label)) =
+                                    parse_reference(text, search_idx)
+                                {
+                                    let normalized_label = normalize_link_label(&ref_label);
+                                    if let Some(ref_def) = link_refs.get(&normalized_label) {
+                                        flush_text(&mut buffer, output);
+                                        output.push(Inline::Image {
+                                            alt: alt_text,
+                                            destination: ref_def.destination.clone(),
+                                            title: ref_def.title.clone(),
+                                        });
+                                        idx = end_idx;
+                                        continue;
+                                    }
+                                }
                                 break;
                             }
                         }
@@ -391,7 +477,7 @@ fn parse_inlines_into(text: &str, output: &mut Vec<Inline>) {
                             {
                                 flush_text(&mut buffer, output);
                                 let mut nested = Vec::new();
-                                parse_inlines_into(&link_text, &mut nested);
+                                parse_inlines_into(&link_text, &mut nested, link_refs);
                                 output.push(Inline::Link {
                                     text: nested,
                                     destination,
@@ -401,7 +487,39 @@ fn parse_inlines_into(text: &str, output: &mut Vec<Inline>) {
                                 continue;
                             }
 
-                            // TODO: Handle reference-style links [ref]
+                            // Try reference-style link [ref] or shortcut reference [text]
+                            // First check for explicit reference [text][ref]
+                            if let Some((end_idx, ref_label)) = parse_reference(text, search_idx) {
+                                let normalized_label = normalize_link_label(&ref_label);
+                                if let Some(ref_def) = link_refs.get(&normalized_label) {
+                                    flush_text(&mut buffer, output);
+                                    let mut nested = Vec::new();
+                                    parse_inlines_into(&link_text, &mut nested, link_refs);
+                                    output.push(Inline::Link {
+                                        text: nested,
+                                        destination: ref_def.destination.clone(),
+                                        title: ref_def.title.clone(),
+                                    });
+                                    idx = end_idx;
+                                    continue;
+                                }
+                            }
+
+                            // Try shortcut reference: [text] where text is the label
+                            let normalized_label = normalize_link_label(&link_text);
+                            if let Some(ref_def) = link_refs.get(&normalized_label) {
+                                flush_text(&mut buffer, output);
+                                let mut nested = Vec::new();
+                                parse_inlines_into(&link_text, &mut nested, link_refs);
+                                output.push(Inline::Link {
+                                    text: nested,
+                                    destination: ref_def.destination.clone(),
+                                    title: ref_def.title.clone(),
+                                });
+                                idx = search_idx + 1;
+                                continue;
+                            }
+
                             break;
                         }
                     }
@@ -417,7 +535,7 @@ fn parse_inlines_into(text: &str, output: &mut Vec<Inline>) {
                     let end = chars[close_idx].0;
                     let inner = &text[start..end];
                     let mut nested = Vec::new();
-                    parse_inlines_into(inner, &mut nested);
+                    parse_inlines_into(inner, &mut nested, link_refs);
                     let strong = run_len >= 2;
                     output.push(Inline::Emphasis {
                         strong,
@@ -459,9 +577,26 @@ fn parse_inlines_into(text: &str, output: &mut Vec<Inline>) {
     flush_text(&mut buffer, output);
 }
 
+/// Link reference information for resolving reference-style links.
+#[derive(Clone, Debug)]
+pub struct LinkReference {
+    pub destination: String,
+    pub title: Option<String>,
+}
+
 /// Parses a raw inline string into `Inline` nodes.
 pub fn parse_inlines_from_text(text: &str) -> Vec<Inline> {
     let mut result = Vec::new();
-    parse_inlines_into(text, &mut result);
+    parse_inlines_into(text, &mut result, &HashMap::new());
+    result
+}
+
+/// Parses a raw inline string into `Inline` nodes with link references.
+pub fn parse_inlines_from_text_with_refs(
+    text: &str,
+    link_refs: &HashMap<String, LinkReference>,
+) -> Vec<Inline> {
+    let mut result = Vec::new();
+    parse_inlines_into(text, &mut result, link_refs);
     result
 }
