@@ -135,6 +135,73 @@ fn parses_autolinks_into_links() {
 }
 
 #[test]
+fn parses_inline_links() {
+    let doc = parse_document("Visit [example](https://example.com) now.");
+
+    match &doc.blocks[0] {
+        Block::Paragraph { content, .. } => {
+            assert!(
+                content.iter().any(|inline| matches!(
+                    inline,
+                    Inline::Link {
+                        destination,
+                        text,
+                        ..
+                    } if destination == "https://example.com" &&
+                       text.iter().any(|t| matches!(t, Inline::Text(s) if s == "example"))
+                )),
+                "expected Inline::Link for [text](url)"
+            );
+        }
+        other => panic!("expected paragraph, found {other:?}"),
+    }
+}
+
+#[test]
+fn parses_inline_links_with_title() {
+    let doc = parse_document("Visit [example](https://example.com \"title\") now.");
+
+    match &doc.blocks[0] {
+        Block::Paragraph { content, .. } => {
+            assert!(
+                content.iter().any(|inline| matches!(
+                    inline,
+                    Inline::Link {
+                        destination,
+                        title: Some(title),
+                        ..
+                    } if destination == "https://example.com" && title == "title"
+                )),
+                "expected Inline::Link with title"
+            );
+        }
+        other => panic!("expected paragraph, found {other:?}"),
+    }
+}
+
+#[test]
+fn parses_images() {
+    let doc = parse_document("See ![alt text](/path/to/image.jpg) here.");
+
+    match &doc.blocks[0] {
+        Block::Paragraph { content, .. } => {
+            assert!(
+                content.iter().any(|inline| matches!(
+                    inline,
+                    Inline::Image {
+                        alt,
+                        destination,
+                        ..
+                    } if alt == "alt text" && destination == "/path/to/image.jpg"
+                )),
+                "expected Inline::Image"
+            );
+        }
+        other => panic!("expected paragraph, found {other:?}"),
+    }
+}
+
+#[test]
 fn parses_multiple_headings() {
     let doc = parse_document("# Level 1\n## Level 2\n### Level 3");
     assert_eq!(doc.blocks.len(), 3);
