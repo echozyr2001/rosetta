@@ -123,7 +123,7 @@ fn main() {
 
     // 6. Validation without output generation
     println!("6. Validation without output generation:");
-    let test_cases = vec![
+    let test_cases = [
         "# Valid heading",
         "**Valid emphasis**",
         "[Valid link](https://example.com)",

@@ -1,11 +1,12 @@
+use crate::error::{MarkdownError, Result};
+use crate::lexer::Position;
+use crate::parser::Parser;
+use crate::parser::ParserConfig;
 /// Streaming parser implementation for large documents.
 /// This module provides streaming capabilities for parsing large Markdown documents
 /// that may not fit entirely in memory. It implements incremental parsing with
 /// backpressure handling and memory management.
-use crate::ast::{Block, Document, SourceMap};
-use crate::error::{MarkdownError, Result};
-use crate::lexer::Position;
-use crate::parser::{Parser, ParserConfig};
+use crate::parser::ast::{Block, Document, SourceMap};
 use std::collections::VecDeque;
 use std::io::{BufReader, Read};
 
@@ -238,7 +239,7 @@ impl<R: Read> StreamingParser<R> {
 
         // Parse the chunk
         let parser_config = self.config.parser_config.clone();
-        let mut parser = Parser::new(&process_text, parser_config);
+        let parser = Parser::new(&process_text, parser_config)?;
         let chunk_document = parser.parse()?;
 
         // Update position tracking
@@ -276,7 +277,7 @@ impl<R: Read> StreamingParser<R> {
         // Parse any remaining content in boundary buffer
         let parser_config = self.config.parser_config.clone();
         let boundary_content = self.boundary_buffer.clone();
-        let mut parser = Parser::new(&boundary_content, parser_config);
+        let parser = Parser::new(&boundary_content, parser_config)?;
         let final_document = parser.parse()?;
 
         self.update_position(&boundary_content);

@@ -1,9 +1,9 @@
+use crate::error::Result;
 /// Performance optimization module for the Markdown engine.
 ///
 /// This module provides zero-copy string handling, memory pooling for node allocation,
 /// and parallel processing capabilities for independent sections.
-use crate::ast::{Block, Document, Inline};
-use crate::error::Result;
+use crate::parser::ast::{Block, Document, Inline};
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -458,7 +458,7 @@ impl PerformanceOptimizer {
 
         Ok(Document {
             blocks: merged_blocks,
-            source_map: crate::ast::SourceMap::new(),
+            source_map: crate::parser::ast::SourceMap::new(),
         })
     }
 

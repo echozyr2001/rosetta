@@ -818,7 +818,7 @@ impl DomTransformer {
     /// Transforms an AST document into a DOM tree
     pub fn transform(
         &self,
-        document: &crate::ast::Document,
+        document: &crate::parser::ast::Document,
     ) -> Result<DomNode, crate::error::MarkdownError> {
         let mut root = DomNode::new("div");
 
@@ -882,9 +882,9 @@ impl DomTransformer {
     /// Transforms a block AST node into a DOM node
     fn transform_block(
         &self,
-        block: &crate::ast::Block,
+        block: &crate::parser::ast::Block,
     ) -> Result<DomNode, crate::error::MarkdownError> {
-        use crate::ast::Block;
+        use crate::parser::ast::Block;
 
         let mut node = match block {
             Block::Heading {
@@ -991,7 +991,7 @@ impl DomTransformer {
                 items,
                 position,
             } => {
-                use crate::ast::ListKind;
+                use crate::parser::ast::ListKind;
 
                 let (tag, class) = match kind {
                     ListKind::Bullet { .. } => ("ul", "bullet-list"),
@@ -1098,9 +1098,9 @@ impl DomTransformer {
     /// Transforms an inline AST node into DOM content
     fn transform_inline(
         &self,
-        inline: &crate::ast::Inline,
+        inline: &crate::parser::ast::Inline,
     ) -> Result<DomChild, crate::error::MarkdownError> {
-        use crate::ast::Inline;
+        use crate::parser::ast::Inline;
 
         let dom_child = match inline {
             Inline::Text(text) => DomChild::Text(text.clone()),
@@ -1283,7 +1283,9 @@ impl DomTransformer {
 /// # Returns
 ///
 /// Returns the root DomNode of the DOM tree
-pub fn from_ast(ast_root: crate::ast::Document) -> Result<DomNode, crate::error::MarkdownError> {
+pub fn from_ast(
+    ast_root: crate::parser::ast::Document,
+) -> Result<DomNode, crate::error::MarkdownError> {
     let transformer = DomTransformer::new_default();
     transformer.transform(&ast_root)
 }
@@ -1291,8 +1293,8 @@ pub fn from_ast(ast_root: crate::ast::Document) -> Result<DomNode, crate::error:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{Inline, ListKind, utils::NodeBuilder};
     use crate::lexer::Position;
+    use crate::parser::ast::{Inline, ListKind, utils::NodeBuilder};
 
     #[test]
     fn test_dom_transformer_basic() {
@@ -1976,7 +1978,7 @@ mod tests {
             Some(true), // checked task
         );
         let list = NodeBuilder::list(
-            crate::ast::ListKind::Bullet { marker: '-' },
+            crate::parser::ast::ListKind::Bullet { marker: '-' },
             true,
             vec![list_item1, list_item2],
             None,
@@ -2122,7 +2124,7 @@ mod tests {
             Some(position),
         );
         let mut heading_with_id = heading;
-        if let crate::ast::Block::Heading { ref mut id, .. } = heading_with_id {
+        if let crate::parser::ast::Block::Heading { ref mut id, .. } = heading_with_id {
             *id = Some("custom-id".to_string());
         }
 
@@ -2325,7 +2327,7 @@ mod tests {
         }
 
         // Test configuration 3: Whitespace preservation
-        let soft_break = crate::ast::Inline::SoftBreak;
+        let soft_break = crate::parser::ast::Inline::SoftBreak;
         let paragraph_with_breaks = NodeBuilder::paragraph(
             vec![
                 NodeBuilder::text("Line 1".to_string()),

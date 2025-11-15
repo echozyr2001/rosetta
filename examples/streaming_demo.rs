@@ -3,7 +3,6 @@
 /// This example shows how to use the streaming parser for processing
 /// large Markdown documents that may not fit entirely in memory.
 use rosetta::streaming::{StreamingConfig, StringStreamingParser};
-use std::io::Write;
 
 fn main() {
     println!("=== Streaming Parser Demo ===\n");
