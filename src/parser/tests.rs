@@ -135,6 +135,480 @@ fn parses_autolinks_into_links() {
 }
 
 #[test]
+fn parses_inline_links() {
+    let doc = parse_document("Visit [example](https://example.com) now.");
+
+    match &doc.blocks[0] {
+        Block::Paragraph { content, .. } => {
+            assert!(
+                content.iter().any(|inline| matches!(
+                    inline,
+                    Inline::Link {
+                        destination,
+                        text,
+                        ..
+                    } if destination == "https://example.com" &&
+                       text.iter().any(|t| matches!(t, Inline::Text(s) if s == "example"))
+                )),
+                "expected Inline::Link for [text](url)"
+            );
+        }
+        other => panic!("expected paragraph, found {other:?}"),
+    }
+}
+
+#[test]
+fn parses_inline_links_with_title() {
+    let doc = parse_document("Visit [example](https://example.com \"title\") now.");
+
+    match &doc.blocks[0] {
+        Block::Paragraph { content, .. } => {
+            assert!(
+                content.iter().any(|inline| matches!(
+                    inline,
+                    Inline::Link {
+                        destination,
+                        title: Some(title),
+                        ..
+                    } if destination == "https://example.com" && title == "title"
+                )),
+                "expected Inline::Link with title"
+            );
+        }
+        other => panic!("expected paragraph, found {other:?}"),
+    }
+}
+
+#[test]
+fn parses_images() {
+    let doc = parse_document("See ![alt text](/path/to/image.jpg) here.");
+
+    match &doc.blocks[0] {
+        Block::Paragraph { content, .. } => {
+            assert!(
+                content.iter().any(|inline| matches!(
+                    inline,
+                    Inline::Image {
+                        alt,
+                        destination,
+                        ..
+                    } if alt == "alt text" && destination == "/path/to/image.jpg"
+                )),
+                "expected Inline::Image"
+            );
+        }
+        other => panic!("expected paragraph, found {other:?}"),
+    }
+}
+
+#[test]
+fn parses_reference_links() {
+    let doc = parse_document("[foo]: /url \"title\"\n\n[foo]");
+
+    match &doc.blocks[0] {
+        Block::Paragraph { content, .. } => {
+            assert!(
+                content.iter().any(|inline| matches!(
+                    inline,
+                    Inline::Link {
+                        destination,
+                        title: Some(title),
+                        ..
+                    } if destination == "/url" && title == "title"
+                )),
+                "expected Inline::Link with reference, got: {content:?}"
+            );
+        }
+        other => panic!("expected paragraph, found {other:?}"),
+    }
+}
+
+#[test]
+fn parses_collapsed_reference_links() {
+    let doc = parse_document("[foo]: /url\n\n[foo][]");
+
+    match &doc.blocks[0] {
+        Block::Paragraph { content, .. } => {
+            assert!(
+                content.iter().any(|inline| matches!(
+                    inline,
+                    Inline::Link {
+                        destination,
+                        ..
+                    } if destination == "/url"
+                )),
+                "expected Inline::Link with collapsed reference"
+            );
+        }
+        other => panic!("expected paragraph, found {other:?}"),
+    }
+}
+
+#[test]
+fn parses_reference_images() {
+    let doc = parse_document("[foo]: /url \"title\"\n\n![alt][foo]");
+
+    match &doc.blocks[0] {
+        Block::Paragraph { content, .. } => {
+            assert!(
+                content.iter().any(|inline| matches!(
+                    inline,
+                    Inline::Image {
+                        alt,
+                        destination,
+                        title: Some(title),
+                        ..
+                    } if alt == "alt" && destination == "/url" && title == "title"
+                )),
+                "expected Inline::Image with reference"
+            );
+        }
+        other => panic!("expected paragraph, found {other:?}"),
+    }
+}
+
+#[test]
+fn handles_escaped_characters() {
+    // According to CommonMark spec, \*not emphasized* should output
+    // <p>*not emphasized*</p> (not emphasis)
+    // The escaped * should prevent it from being parsed as emphasis
+    let doc = parse_document("\\*not emphasized*");
+
+    match &doc.blocks[0] {
+        Block::Paragraph { content, .. } => {
+            // The escaped * should not be parsed as emphasis
+            let has_emphasis = content
+                .iter()
+                .any(|inline| matches!(inline, Inline::Emphasis { .. }));
+            assert!(
+                !has_emphasis,
+                "expected no emphasis when asterisk is escaped, got: {content:?}"
+            );
+
+            // Should have text containing the asterisk
+            let has_text_with_asterisk = content
+                .iter()
+                .any(|inline| matches!(inline, Inline::Text(text) if text.contains('*')));
+            assert!(
+                has_text_with_asterisk,
+                "expected text with asterisk, got: {content:?}"
+            );
+        }
+        other => panic!("expected paragraph, found {other:?}"),
+    }
+}
+
+#[test]
+fn handles_html_entities() {
+    let doc = parse_document("&amp; &lt; &gt;");
+
+    match &doc.blocks[0] {
+        Block::Paragraph { content, .. } => {
+            // HTML entities should be resolved
+            assert!(
+                content.iter().any(|inline| matches!(
+                    inline,
+                    Inline::Text(text) if text.contains('&') || text.contains('<') || text.contains('>')
+                )),
+                "expected HTML entities to be resolved"
+            );
+        }
+        other => panic!("expected paragraph, found {other:?}"),
+    }
+}
+
+// CommonMark specification compliance tests
+
+#[test]
+fn commonmark_link_reference_with_indentation() {
+    // Spec example: Link reference definition with indentation
+    let doc = parse_document("   [foo]: \n      /url  \n           'the title'  \n\n[foo]");
+
+    match &doc.blocks[0] {
+        Block::Paragraph { content, .. } => {
+            assert!(
+                content.iter().any(|inline| matches!(
+                    inline,
+                    Inline::Link {
+                        destination,
+                        title: Some(title),
+                        ..
+                    } if destination == "/url" && title == "the title"
+                )),
+                "expected link with indented reference definition"
+            );
+        }
+        other => panic!("expected paragraph, found {other:?}"),
+    }
+}
+
+#[test]
+fn commonmark_link_reference_empty_destination() {
+    // Spec example: Empty link destination using angle brackets
+    let doc = parse_document("[foo]: <>\n\n[foo]");
+
+    match &doc.blocks[0] {
+        Block::Paragraph { content, .. } => {
+            assert!(
+                content.iter().any(|inline| matches!(
+                    inline,
+                    Inline::Link {
+                        destination,
+                        ..
+                    } if destination == ""
+                )),
+                "expected link with empty destination"
+            );
+        }
+        other => panic!("expected paragraph, found {other:?}"),
+    }
+}
+
+#[test]
+fn commonmark_link_reference_without_title() {
+    // Spec example: Link reference definition without title
+    let doc = parse_document("[foo]:\n/url\n\n[foo]");
+
+    match &doc.blocks[0] {
+        Block::Paragraph { content, .. } => {
+            assert!(
+                content.iter().any(|inline| matches!(
+                    inline,
+                    Inline::Link {
+                        destination,
+                        title: None,
+                        ..
+                    } if destination == "/url"
+                )),
+                "expected link without title"
+            );
+        }
+        other => panic!("expected paragraph, found {other:?}"),
+    }
+}
+
+#[test]
+fn commonmark_link_before_definition() {
+    // Spec example: Link can come before its definition
+    let doc = parse_document("[foo]\n\n[foo]: url");
+
+    match &doc.blocks[0] {
+        Block::Paragraph { content, .. } => {
+            assert!(
+                content.iter().any(|inline| matches!(
+                    inline,
+                    Inline::Link {
+                        destination,
+                        ..
+                    } if destination == "url"
+                )),
+                "expected link resolved from later definition"
+            );
+        }
+        other => panic!("expected paragraph, found {other:?}"),
+    }
+}
+
+#[test]
+fn commonmark_inline_link_empty_text() {
+    // Spec example: Inline link with empty text
+    let doc = parse_document("[](./target.md)");
+
+    match &doc.blocks[0] {
+        Block::Paragraph { content, .. } => {
+            assert!(
+                content.iter().any(|inline| matches!(
+                    inline,
+                    Inline::Link {
+                        text,
+                        destination,
+                        ..
+                    } if destination == "./target.md" && text.is_empty()
+                )),
+                "expected link with empty text"
+            );
+        }
+        other => panic!("expected paragraph, found {other:?}"),
+    }
+}
+
+#[test]
+fn commonmark_inline_link_empty_destination() {
+    // Spec example: Inline link with empty destination
+    let doc = parse_document("[link]()");
+
+    match &doc.blocks[0] {
+        Block::Paragraph { content, .. } => {
+            assert!(
+                content.iter().any(|inline| matches!(
+                    inline,
+                    Inline::Link {
+                        destination,
+                        ..
+                    } if destination == ""
+                )),
+                "expected link with empty destination"
+            );
+        }
+        other => panic!("expected paragraph, found {other:?}"),
+    }
+}
+
+#[test]
+fn commonmark_inline_link_with_angle_brackets() {
+    // Spec example: Link destination with spaces requires angle brackets
+    let doc = parse_document("[link](</my uri>)");
+
+    match &doc.blocks[0] {
+        Block::Paragraph { content, .. } => {
+            assert!(
+                content.iter().any(|inline| matches!(
+                    inline,
+                    Inline::Link {
+                        destination,
+                        ..
+                    } if destination == "/my uri"
+                )),
+                "expected link with destination containing spaces"
+            );
+        }
+        other => panic!("expected paragraph, found {other:?}"),
+    }
+}
+
+#[test]
+fn commonmark_escaped_link_bracket() {
+    // Spec example: Escaped bracket should not create a link
+    let doc = parse_document("\\[not a link](/foo)");
+
+    match &doc.blocks[0] {
+        Block::Paragraph { content, .. } => {
+            // Should not have a link, should have plain text
+            let has_link = content
+                .iter()
+                .any(|inline| matches!(inline, Inline::Link { .. }));
+            assert!(!has_link, "expected no link when bracket is escaped");
+
+            // Should have text containing the bracket
+            let has_text = content
+                .iter()
+                .any(|inline| matches!(inline, Inline::Text(text) if text.contains('[')));
+            assert!(has_text, "expected text with escaped bracket");
+        }
+        other => panic!("expected paragraph, found {other:?}"),
+    }
+}
+
+#[test]
+fn commonmark_escaped_code_backtick() {
+    // Spec example: Escaped backtick should not create code span
+    let doc = parse_document("\\`not code`");
+
+    match &doc.blocks[0] {
+        Block::Paragraph { content, .. } => {
+            // Should not have code span
+            let has_code = content
+                .iter()
+                .any(|inline| matches!(inline, Inline::Code(_)));
+            assert!(!has_code, "expected no code span when backtick is escaped");
+
+            // Should have text containing the backtick
+            let has_text = content
+                .iter()
+                .any(|inline| matches!(inline, Inline::Text(text) if text.contains('`')));
+            assert!(has_text, "expected text with escaped backtick");
+        }
+        other => panic!("expected paragraph, found {other:?}"),
+    }
+}
+
+#[test]
+fn commonmark_double_escaped_emphasis() {
+    // Spec example: Double backslash followed by emphasis
+    let doc = parse_document("\\\\*emphasis*");
+
+    match &doc.blocks[0] {
+        Block::Paragraph { content, .. } => {
+            // Should have emphasis (first backslash escapes second, second doesn't escape *)
+            let has_emphasis = content
+                .iter()
+                .any(|inline| matches!(inline, Inline::Emphasis { .. }));
+            assert!(has_emphasis, "expected emphasis after double backslash");
+        }
+        other => panic!("expected paragraph, found {other:?}"),
+    }
+}
+
+#[test]
+fn commonmark_collapsed_reference_link() {
+    // Spec example: Collapsed reference link [text][]
+    let doc = parse_document("[foo]: /url\n\n[foo][]");
+
+    match &doc.blocks[0] {
+        Block::Paragraph { content, .. } => {
+            assert!(
+                content.iter().any(|inline| matches!(
+                    inline,
+                    Inline::Link {
+                        destination,
+                        ..
+                    } if destination == "/url"
+                )),
+                "expected collapsed reference link"
+            );
+        }
+        other => panic!("expected paragraph, found {other:?}"),
+    }
+}
+
+#[test]
+fn commonmark_reference_image() {
+    // Spec example: Reference-style image
+    let doc = parse_document("[foo]: /url \"title\"\n\n![alt][foo]");
+
+    match &doc.blocks[0] {
+        Block::Paragraph { content, .. } => {
+            assert!(
+                content.iter().any(|inline| matches!(
+                    inline,
+                    Inline::Image {
+                        alt,
+                        destination,
+                        title: Some(title),
+                        ..
+                    } if alt == "alt" && destination == "/url" && title == "title"
+                )),
+                "expected reference-style image"
+            );
+        }
+        other => panic!("expected paragraph, found {other:?}"),
+    }
+}
+
+#[test]
+fn commonmark_inline_link_with_title() {
+    // Spec example: Inline link with title
+    let doc = parse_document("[link](/uri \"title\")");
+
+    match &doc.blocks[0] {
+        Block::Paragraph { content, .. } => {
+            assert!(
+                content.iter().any(|inline| matches!(
+                    inline,
+                    Inline::Link {
+                        destination,
+                        title: Some(title),
+                        ..
+                    } if destination == "/uri" && title == "title"
+                )),
+                "expected inline link with title"
+            );
+        }
+        other => panic!("expected paragraph, found {other:?}"),
+    }
+}
+
+#[test]
 fn parses_multiple_headings() {
     let doc = parse_document("# Level 1\n## Level 2\n### Level 3");
     assert_eq!(doc.blocks.len(), 3);

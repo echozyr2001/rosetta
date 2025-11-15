@@ -2,8 +2,8 @@ use super::position::Position;
 use super::rules::{
     parse_atx_heading, parse_autolink, parse_blockquote, parse_code_fence, parse_code_span,
     parse_emphasis_delimiter, parse_entity, parse_escape_sequence, parse_html_inline, parse_indent,
-    parse_list_marker, parse_newline, parse_setext_heading, parse_text, parse_thematic_break,
-    parse_whitespace,
+    parse_link_reference_definition, parse_list_marker, parse_newline, parse_setext_heading,
+    parse_text, parse_thematic_break, parse_whitespace,
 };
 use super::token::*;
 use std::marker::PhantomData;
@@ -316,6 +316,12 @@ impl<'input> LexingRule<'input, Token<'input>> for MarkdownRules {
             }
 
             if let Ok((remaining, token)) = parse_thematic_break(current) {
+                let consumed = current.len() - remaining.len();
+                cursor.advance(consumed);
+                return Some(Self::add_position(token, start_position));
+            }
+
+            if let Ok((remaining, token)) = parse_link_reference_definition(current) {
                 let consumed = current.len() - remaining.len();
                 cursor.advance(consumed);
                 return Some(Self::add_position(token, start_position));

@@ -4,7 +4,7 @@ use nom::bytes::complete::{is_not, tag, take_until, take_while, take_while_m_n, 
 use nom::character::complete::{char, line_ending, not_line_ending, space0, space1};
 use nom::combinator::{map, opt, recognize, verify};
 use nom::multi::{many_m_n, many1};
-use nom::sequence::{pair, preceded, tuple};
+use nom::sequence::{pair, preceded, terminated, tuple};
 
 use super::position::Position;
 use super::token::*;
@@ -189,6 +189,78 @@ pub(super) fn parse_indent(input: &str) -> IResult<&str, Token<'_>> {
             })
         },
     )(input)
+}
+
+pub(super) fn parse_link_reference_definition(input: &str) -> IResult<&str, Token<'_>> {
+    // Link reference definition: [label]: destination "title"
+    // Format: [label]: destination "title" or [label]: destination 'title' or [label]: destination (title)
+    // Must be at the start of a line (handled by cursor.is_at_block_start())
+
+    // Optional indentation (up to 3 spaces)
+    let (input, _indent) = opt(take_while_m_n(0, 3, |c: char| c == ' '))(input)?;
+
+    // [label]
+    let (input, label) = preceded(char('['), terminated(take_until("]"), char(']')))(input)?;
+
+    // :
+    let (input, _) = char(':')(input)?;
+
+    // Optional whitespace and line ending
+    let (input, _) = space0(input)?;
+    let (input, _) = opt(line_ending)(input)?;
+    let (input, _) = space0(input)?;
+
+    // Destination: either <url> or plain url
+    let (input, destination) = alt((
+        // <url> format
+        map(
+            tuple((char('<'), take_until(">"), char('>'))),
+            |(_, dest, _): (char, &str, char)| dest,
+        ),
+        // Plain URL format (no spaces, no control chars)
+        take_while1(|c: char| c != ' ' && c != '\t' && c != '\n' && c != '\r' && !c.is_control()),
+    ))(input)?;
+
+    // Optional whitespace and line ending
+    let (input, _) = space0(input)?;
+    let (input, _) = opt(line_ending)(input)?;
+    let (input, _) = space0(input)?;
+
+    // Optional title: "title" or 'title' or (title)
+    let (input, title_opt) = opt(alt((
+        // Double-quoted title
+        map(
+            tuple((char('"'), take_until("\""), char('"'))),
+            |(_, title, _): (char, &str, char)| title,
+        ),
+        // Single-quoted title
+        map(
+            tuple((char('\''), take_until("'"), char('\''))),
+            |(_, title, _): (char, &str, char)| title,
+        ),
+        // Parenthesized title
+        map(
+            tuple((char('('), take_until(")"), char(')'))),
+            |(_, title, _): (char, &str, char)| title,
+        ),
+    )))(input)?;
+
+    // Optional whitespace
+    let (input, _) = space0(input)?;
+
+    // Must end with line ending or EOF (we don't consume EOF here)
+    let (input, _) = opt(line_ending)(input)?;
+
+    Ok((
+        input,
+        Token::LinkReferenceDefinition(LinkReferenceDefinitionToken {
+            label,
+            destination,
+            title: title_opt,
+            marker_offset: 0,
+            position: Position::default(),
+        }),
+    ))
 }
 
 pub(super) fn parse_setext_heading(input: &str) -> IResult<&str, Token<'_>> {

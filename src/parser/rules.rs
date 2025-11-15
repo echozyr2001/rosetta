@@ -1,9 +1,10 @@
 use crate::lexer::token::{CodeBlockToken, ListKind as LexerListKind, ThematicBreakToken, Token};
 use crate::parser::ast::{Block, Document, Inline, ListItem, ListKind};
-use crate::parser::inline;
+use crate::parser::inline::{self, LinkReference};
 use crate::parser::token_slice::TokenSlice;
 use crate::parser::traits::ParseRule;
 use nom::{Err as NomErr, IResult, error::ErrorKind};
+use std::collections::HashMap;
 
 pub type ParseInput<'slice, 'input> = TokenSlice<'slice, Token<'input>>;
 pub type ParseOutput<'slice, 'input, T> = IResult<ParseInput<'slice, 'input>, T>;
@@ -52,6 +53,7 @@ fn skip_separators<'slice, 'input>(
 
 fn parse_atx_heading_block<'slice, 'input>(
     input: ParseInput<'slice, 'input>,
+    link_refs: &HashMap<String, LinkReference>,
 ) -> ParseOutput<'slice, 'input, Block>
 where
     'input: 'slice,
@@ -63,7 +65,10 @@ where
                 rest,
                 Block::Heading {
                     level: token.level,
-                    content: inline::parse_inlines_from_text(token.raw_content.trim()),
+                    content: inline::parse_inlines_from_text_with_refs(
+                        token.raw_content.trim(),
+                        link_refs,
+                    ),
                     id: None,
                     position: Some(token.position),
                 },
@@ -75,6 +80,7 @@ where
 
 fn parse_setext_heading_block<'slice, 'input>(
     input: ParseInput<'slice, 'input>,
+    link_refs: &HashMap<String, LinkReference>,
 ) -> ParseOutput<'slice, 'input, Block>
 where
     'input: 'slice,
@@ -86,7 +92,10 @@ where
                 rest,
                 Block::Heading {
                     level: token.level,
-                    content: inline::parse_inlines_from_text(token.raw_content),
+                    content: inline::parse_inlines_from_text_with_refs(
+                        token.raw_content,
+                        link_refs,
+                    ),
                     id: None,
                     position: Some(token.position),
                 },
@@ -130,6 +139,7 @@ where
 
 fn parse_blockquote_block<'slice, 'input>(
     input: ParseInput<'slice, 'input>,
+    link_refs: &HashMap<String, LinkReference>,
 ) -> ParseOutput<'slice, 'input, Block>
 where
     'input: 'slice,
@@ -195,7 +205,7 @@ where
     let content = if child_slice.is_empty() {
         Vec::new()
     } else {
-        match parse_blocks(child_slice) {
+        match parse_blocks_internal(child_slice, link_refs) {
             Ok((remaining, parsed)) if remaining.is_empty() => parsed,
             _ => return Err(nom_error(input)),
         }
@@ -216,6 +226,7 @@ fn map_list_kind(kind: &LexerListKind) -> ListKind {
 
 fn parse_list_block<'slice, 'input>(
     input: ParseInput<'slice, 'input>,
+    link_refs: &HashMap<String, LinkReference>,
 ) -> ParseOutput<'slice, 'input, Block>
 where
     'input: 'slice,
@@ -318,7 +329,7 @@ where
         let content = if child_slice.is_empty() {
             Vec::new()
         } else {
-            match parse_blocks(child_slice) {
+            match parse_blocks_internal(child_slice, link_refs) {
                 Ok((remaining, blocks)) if remaining.is_empty() => blocks,
                 _ => return Err(nom_error(input)),
             }
@@ -374,6 +385,7 @@ where
 
 fn parse_paragraph_block<'slice, 'input>(
     input: ParseInput<'slice, 'input>,
+    link_refs: &HashMap<String, LinkReference>,
 ) -> ParseOutput<'slice, 'input, Block>
 where
     'input: 'slice,
@@ -388,6 +400,7 @@ where
     let mut found_content = false;
     let mut text_buffer = String::new();
     let mut inlines: Vec<Inline> = Vec::new();
+    let mut escaped_positions = std::collections::HashSet::new();
 
     while idx < tokens.len() {
         match &tokens[idx] {
@@ -417,7 +430,10 @@ where
                 if position.is_none() {
                     position = Some(token.position);
                 }
+                // Record the byte position of the escaped character
+                let escaped_pos = text_buffer.len();
                 text_buffer.push(token.escaped);
+                escaped_positions.insert(escaped_pos);
                 found_content = true;
                 idx += 1;
             }
@@ -467,8 +483,13 @@ where
                     position = Some(token.position);
                 }
                 if !text_buffer.is_empty() {
-                    inlines.extend(inline::parse_inlines_from_text(&text_buffer));
+                    inlines.extend(inline::parse_inlines_from_text_with_refs_and_escaped(
+                        &text_buffer,
+                        link_refs,
+                        &escaped_positions,
+                    ));
                     text_buffer.clear();
+                    escaped_positions.clear();
                 }
                 inlines.push(Inline::Code(token.content.to_string()));
                 found_content = true;
@@ -479,8 +500,13 @@ where
                     position = Some(token.position);
                 }
                 if !text_buffer.is_empty() {
-                    inlines.extend(inline::parse_inlines_from_text(&text_buffer));
+                    inlines.extend(inline::parse_inlines_from_text_with_refs_and_escaped(
+                        &text_buffer,
+                        link_refs,
+                        &escaped_positions,
+                    ));
                     text_buffer.clear();
+                    escaped_positions.clear();
                 }
                 inlines.push(Inline::HtmlInline(token.raw.to_string()));
                 found_content = true;
@@ -491,8 +517,13 @@ where
                     position = Some(token.position);
                 }
                 if !text_buffer.is_empty() {
-                    inlines.extend(inline::parse_inlines_from_text(&text_buffer));
+                    inlines.extend(inline::parse_inlines_from_text_with_refs_and_escaped(
+                        &text_buffer,
+                        link_refs,
+                        &escaped_positions,
+                    ));
                     text_buffer.clear();
+                    escaped_positions.clear();
                 }
                 let text = Inline::Text(token.lexeme.to_string());
                 inlines.push(Inline::Link {
@@ -511,8 +542,13 @@ where
                     position = Some(token.position);
                 }
                 if !text_buffer.is_empty() {
-                    inlines.extend(inline::parse_inlines_from_text(&text_buffer));
+                    inlines.extend(inline::parse_inlines_from_text_with_refs_and_escaped(
+                        &text_buffer,
+                        link_refs,
+                        &escaped_positions,
+                    ));
                     text_buffer.clear();
+                    escaped_positions.clear();
                 }
                 inlines.push(Inline::SoftBreak);
                 idx += 1;
@@ -525,8 +561,13 @@ where
                     position = Some(token.position);
                 }
                 if !text_buffer.is_empty() {
-                    inlines.extend(inline::parse_inlines_from_text(&text_buffer));
+                    inlines.extend(inline::parse_inlines_from_text_with_refs_and_escaped(
+                        &text_buffer,
+                        link_refs,
+                        &escaped_positions,
+                    ));
                     text_buffer.clear();
+                    escaped_positions.clear();
                 }
                 inlines.push(Inline::SoftBreak);
                 idx += 1;
@@ -539,8 +580,13 @@ where
                     position = Some(token.position);
                 }
                 if !text_buffer.is_empty() {
-                    inlines.extend(inline::parse_inlines_from_text(&text_buffer));
+                    inlines.extend(inline::parse_inlines_from_text_with_refs_and_escaped(
+                        &text_buffer,
+                        link_refs,
+                        &escaped_positions,
+                    ));
                     text_buffer.clear();
+                    escaped_positions.clear();
                 }
                 inlines.push(Inline::HardBreak);
                 idx += 1;
@@ -551,8 +597,13 @@ where
     }
 
     if !text_buffer.is_empty() {
-        inlines.extend(inline::parse_inlines_from_text(&text_buffer));
+        inlines.extend(inline::parse_inlines_from_text_with_refs_and_escaped(
+            &text_buffer,
+            link_refs,
+            &escaped_positions,
+        ));
         text_buffer.clear();
+        escaped_positions.clear();
     }
 
     if !found_content && inlines.is_empty() {
@@ -562,14 +613,12 @@ where
     let rest = advance(input, idx);
 
     // Check if the next token is a SetextHeadingToken
-    // If so, convert this paragraph to a heading using the content from the token
     if let Some(Token::SetextHeading(token)) = rest.first() {
-        // Use the raw_content from the SetextHeadingToken which was extracted by Lexer
         return Ok((
             advance(rest, 1),
             Block::Heading {
                 level: token.level,
-                content: inline::parse_inlines_from_text(token.raw_content),
+                content: inline::parse_inlines_from_text_with_refs(token.raw_content, link_refs),
                 id: None,
                 position,
             },
@@ -587,21 +636,58 @@ where
 
 fn parse_block<'slice, 'input>(
     input: ParseInput<'slice, 'input>,
+    link_refs: &HashMap<String, LinkReference>,
 ) -> ParseOutput<'slice, 'input, Block>
 where
     'input: 'slice,
 {
-    parse_atx_heading_block(input)
-        .or_else(|_| parse_setext_heading_block(input))
+    parse_atx_heading_block(input, link_refs)
+        .or_else(|_| parse_setext_heading_block(input, link_refs))
         .or_else(|_| parse_code_block_block(input))
-        .or_else(|_| parse_blockquote_block(input))
-        .or_else(|_| parse_list_block(input))
+        .or_else(|_| parse_blockquote_block(input, link_refs))
+        .or_else(|_| parse_list_block(input, link_refs))
         .or_else(|_| parse_thematic_break_block(input))
-        .or_else(|_| parse_paragraph_block(input))
+        .or_else(|_| parse_paragraph_block(input, link_refs))
 }
 
-fn parse_blocks<'slice, 'input>(
+fn collect_link_references<'slice, 'input>(
+    input: ParseInput<'slice, 'input>,
+) -> (ParseInput<'slice, 'input>, HashMap<String, LinkReference>)
+where
+    'input: 'slice,
+{
+    let mut link_refs = HashMap::new();
+    let tokens = input.tokens();
+    let mut idx = 0;
+
+    while idx < tokens.len() {
+        if let Token::LinkReferenceDefinition(ref_def) = &tokens[idx] {
+            let normalized_label = normalize_link_label(ref_def.label);
+            link_refs.insert(
+                normalized_label,
+                LinkReference {
+                    destination: ref_def.destination.to_string(),
+                    title: ref_def.title.map(|s| s.to_string()),
+                },
+            );
+        }
+        idx += 1;
+    }
+
+    (input, link_refs)
+}
+
+fn normalize_link_label(label: &str) -> String {
+    label
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+fn parse_blocks_internal<'slice, 'input>(
     mut input: ParseInput<'slice, 'input>,
+    link_refs: &HashMap<String, LinkReference>,
 ) -> ParseOutput<'slice, 'input, Vec<Block>>
 where
     'input: 'slice,
@@ -610,7 +696,14 @@ where
     input = skip_separators(input);
 
     while !input.is_empty() {
-        match parse_block(input) {
+        // Skip link reference definitions (they don't become blocks)
+        if matches!(input.first(), Some(Token::LinkReferenceDefinition(_))) {
+            input = advance(input, 1);
+            input = skip_separators(input);
+            continue;
+        }
+
+        match parse_block(input, link_refs) {
             Ok((rest, block)) => {
                 if rest.len() == input.len() {
                     return Err(nom_error(input));
@@ -624,6 +717,18 @@ where
     }
 
     Ok((input, blocks))
+}
+
+fn parse_blocks<'slice, 'input>(
+    input: ParseInput<'slice, 'input>,
+) -> ParseOutput<'slice, 'input, Vec<Block>>
+where
+    'input: 'slice,
+{
+    // First pass: collect link reference definitions
+    let (_, link_refs) = collect_link_references(input);
+
+    parse_blocks_internal(input, &link_refs)
 }
 
 impl<'slice, 'input> ParseRule<'slice, Token<'input>, Document> for MarkdownParseRule
