@@ -873,6 +873,7 @@ where
     let mut found_content = false;
     let mut text_buffer = String::new();
     let mut inlines: Vec<Inline> = Vec::new();
+    let mut escaped_positions = std::collections::HashSet::new();
 
     while idx < tokens.len() {
         match &tokens[idx] {
@@ -902,7 +903,10 @@ where
                 if position.is_none() {
                     position = Some(token.position);
                 }
+                // Record the byte position of the escaped character
+                let escaped_pos = text_buffer.len();
                 text_buffer.push(token.escaped);
+                escaped_positions.insert(escaped_pos);
                 found_content = true;
                 idx += 1;
             }
@@ -952,11 +956,13 @@ where
                     position = Some(token.position);
                 }
                 if !text_buffer.is_empty() {
-                    inlines.extend(inline::parse_inlines_from_text_with_refs(
+                    inlines.extend(inline::parse_inlines_from_text_with_refs_and_escaped(
                         &text_buffer,
                         link_refs,
+                        &escaped_positions,
                     ));
                     text_buffer.clear();
+                    escaped_positions.clear();
                 }
                 inlines.push(Inline::Code(token.content.to_string()));
                 found_content = true;
@@ -967,11 +973,13 @@ where
                     position = Some(token.position);
                 }
                 if !text_buffer.is_empty() {
-                    inlines.extend(inline::parse_inlines_from_text_with_refs(
+                    inlines.extend(inline::parse_inlines_from_text_with_refs_and_escaped(
                         &text_buffer,
                         link_refs,
+                        &escaped_positions,
                     ));
                     text_buffer.clear();
+                    escaped_positions.clear();
                 }
                 inlines.push(Inline::HtmlInline(token.raw.to_string()));
                 found_content = true;
@@ -982,11 +990,13 @@ where
                     position = Some(token.position);
                 }
                 if !text_buffer.is_empty() {
-                    inlines.extend(inline::parse_inlines_from_text_with_refs(
+                    inlines.extend(inline::parse_inlines_from_text_with_refs_and_escaped(
                         &text_buffer,
                         link_refs,
+                        &escaped_positions,
                     ));
                     text_buffer.clear();
+                    escaped_positions.clear();
                 }
                 let text = Inline::Text(token.lexeme.to_string());
                 inlines.push(Inline::Link {
@@ -1005,11 +1015,13 @@ where
                     position = Some(token.position);
                 }
                 if !text_buffer.is_empty() {
-                    inlines.extend(inline::parse_inlines_from_text_with_refs(
+                    inlines.extend(inline::parse_inlines_from_text_with_refs_and_escaped(
                         &text_buffer,
                         link_refs,
+                        &escaped_positions,
                     ));
                     text_buffer.clear();
+                    escaped_positions.clear();
                 }
                 inlines.push(Inline::SoftBreak);
                 idx += 1;
@@ -1022,11 +1034,13 @@ where
                     position = Some(token.position);
                 }
                 if !text_buffer.is_empty() {
-                    inlines.extend(inline::parse_inlines_from_text_with_refs(
+                    inlines.extend(inline::parse_inlines_from_text_with_refs_and_escaped(
                         &text_buffer,
                         link_refs,
+                        &escaped_positions,
                     ));
                     text_buffer.clear();
+                    escaped_positions.clear();
                 }
                 inlines.push(Inline::SoftBreak);
                 idx += 1;
@@ -1039,11 +1053,13 @@ where
                     position = Some(token.position);
                 }
                 if !text_buffer.is_empty() {
-                    inlines.extend(inline::parse_inlines_from_text_with_refs(
+                    inlines.extend(inline::parse_inlines_from_text_with_refs_and_escaped(
                         &text_buffer,
                         link_refs,
+                        &escaped_positions,
                     ));
                     text_buffer.clear();
+                    escaped_positions.clear();
                 }
                 inlines.push(Inline::HardBreak);
                 idx += 1;
@@ -1054,11 +1070,13 @@ where
     }
 
     if !text_buffer.is_empty() {
-        inlines.extend(inline::parse_inlines_from_text_with_refs(
+        inlines.extend(inline::parse_inlines_from_text_with_refs_and_escaped(
             &text_buffer,
             link_refs,
+            &escaped_positions,
         ));
         text_buffer.clear();
+        escaped_positions.clear();
     }
 
     if !found_content && inlines.is_empty() {

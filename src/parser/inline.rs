@@ -308,8 +308,13 @@ fn parse_inline_link(
         idx += 1;
     }
 
-    // Parse destination
-    let (dest_end, destination) = parse_link_destination(text, idx)?;
+    // Parse destination (may be empty)
+    let (dest_end, destination) = if idx < chars.len() && chars[idx].1 == ')' {
+        // Empty destination: [link]()
+        (idx, String::new())
+    } else {
+        parse_link_destination(text, idx).unwrap_or((idx, String::new()))
+    };
     idx = dest_end;
 
     // Skip whitespace
@@ -352,6 +357,7 @@ fn parse_inlines_into(
     text: &str,
     output: &mut Vec<Inline>,
     link_refs: &HashMap<String, LinkReference>,
+    escaped_positions: &std::collections::HashSet<usize>,
 ) {
     if text.is_empty() {
         return;
@@ -363,8 +369,19 @@ fn parse_inlines_into(
 
     while idx < chars.len() {
         let (byte_idx, ch) = chars[idx];
+
+        // Check if this character position was escaped
+        let is_escaped = escaped_positions.contains(&byte_idx);
+
         match ch {
             '`' => {
+                // If this character was escaped, treat it as plain text
+                if is_escaped {
+                    buffer.push(ch);
+                    idx += 1;
+                    continue;
+                }
+
                 if let Some(close_idx) = find_char(&chars, idx + 1, '`') {
                     flush_text(&mut buffer, output);
                     let start = byte_idx + ch.len_utf8();
@@ -445,6 +462,13 @@ fn parse_inlines_into(
                 buffer.push(ch);
             }
             '[' => {
+                // If this character was escaped, treat it as plain text
+                if is_escaped {
+                    buffer.push(ch);
+                    idx += 1;
+                    continue;
+                }
+
                 // Check for link: [text](url) or [text][ref]
                 let mut bracket_depth = 1;
                 let mut search_idx = idx + 1;
@@ -477,7 +501,13 @@ fn parse_inlines_into(
                             {
                                 flush_text(&mut buffer, output);
                                 let mut nested = Vec::new();
-                                parse_inlines_into(&link_text, &mut nested, link_refs);
+                                let empty_escaped = std::collections::HashSet::new();
+                                parse_inlines_into(
+                                    &link_text,
+                                    &mut nested,
+                                    link_refs,
+                                    &empty_escaped,
+                                );
                                 output.push(Inline::Link {
                                     text: nested,
                                     destination,
@@ -494,7 +524,13 @@ fn parse_inlines_into(
                                 if let Some(ref_def) = link_refs.get(&normalized_label) {
                                     flush_text(&mut buffer, output);
                                     let mut nested = Vec::new();
-                                    parse_inlines_into(&link_text, &mut nested, link_refs);
+                                    let empty_escaped = std::collections::HashSet::new();
+                                    parse_inlines_into(
+                                        &link_text,
+                                        &mut nested,
+                                        link_refs,
+                                        &empty_escaped,
+                                    );
                                     output.push(Inline::Link {
                                         text: nested,
                                         destination: ref_def.destination.clone(),
@@ -510,7 +546,13 @@ fn parse_inlines_into(
                             if let Some(ref_def) = link_refs.get(&normalized_label) {
                                 flush_text(&mut buffer, output);
                                 let mut nested = Vec::new();
-                                parse_inlines_into(&link_text, &mut nested, link_refs);
+                                let empty_escaped = std::collections::HashSet::new();
+                                parse_inlines_into(
+                                    &link_text,
+                                    &mut nested,
+                                    link_refs,
+                                    &empty_escaped,
+                                );
                                 output.push(Inline::Link {
                                     text: nested,
                                     destination: ref_def.destination.clone(),
@@ -528,6 +570,13 @@ fn parse_inlines_into(
                 buffer.push(ch);
             }
             '*' | '_' => {
+                // If this character was escaped, treat it as plain text
+                if is_escaped {
+                    buffer.push(ch);
+                    idx += 1;
+                    continue;
+                }
+
                 let run_len = emphasis_run_length(&chars, idx, ch);
                 if let Some(close_idx) = find_matching_emphasis(&chars, idx, ch, run_len) {
                     flush_text(&mut buffer, output);
@@ -535,7 +584,9 @@ fn parse_inlines_into(
                     let end = chars[close_idx].0;
                     let inner = &text[start..end];
                     let mut nested = Vec::new();
-                    parse_inlines_into(inner, &mut nested, link_refs);
+                    // Create empty escaped_positions for nested parsing
+                    let empty_escaped = std::collections::HashSet::new();
+                    parse_inlines_into(inner, &mut nested, link_refs, &empty_escaped);
                     let strong = run_len >= 2;
                     output.push(Inline::Emphasis {
                         strong,
@@ -587,7 +638,8 @@ pub struct LinkReference {
 /// Parses a raw inline string into `Inline` nodes.
 pub fn parse_inlines_from_text(text: &str) -> Vec<Inline> {
     let mut result = Vec::new();
-    parse_inlines_into(text, &mut result, &HashMap::new());
+    let empty_escaped = std::collections::HashSet::new();
+    parse_inlines_into(text, &mut result, &HashMap::new(), &empty_escaped);
     result
 }
 
@@ -597,6 +649,18 @@ pub fn parse_inlines_from_text_with_refs(
     link_refs: &HashMap<String, LinkReference>,
 ) -> Vec<Inline> {
     let mut result = Vec::new();
-    parse_inlines_into(text, &mut result, link_refs);
+    let empty_escaped = std::collections::HashSet::new();
+    parse_inlines_into(text, &mut result, link_refs, &empty_escaped);
+    result
+}
+
+/// Parses a raw inline string into `Inline` nodes with link references and escaped positions.
+pub fn parse_inlines_from_text_with_refs_and_escaped(
+    text: &str,
+    link_refs: &HashMap<String, LinkReference>,
+    escaped_positions: &std::collections::HashSet<usize>,
+) -> Vec<Inline> {
+    let mut result = Vec::new();
+    parse_inlines_into(text, &mut result, link_refs, escaped_positions);
     result
 }
